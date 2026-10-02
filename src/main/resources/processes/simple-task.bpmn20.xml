@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    스텝1 → 스텝2 → 스텝3 → 종료 로 이어지는 단순 순차 워크플로우.
+
+    · 배포 시점 — Flowable 스타터가 기동 시 classpath 의 processes/**.bpmn20.xml 를 자동 배포한다.
+      파일 내용이 바뀌면 새 버전으로 재배포되고, 진행 중이던 인스턴스는 기존 버전으로 계속 흐른다.
+    · userTask 의 id(step1/step2/step3)가 화면과 REST 의 step 파라미터와 1:1로 대응한다.
+      이 id 를 바꾸면 WorkflowService.STEP_KEYS 와 화면 3개를 함께 고쳐야 한다.
+    · assignee 는 프로세스 시작 시 넘기는 initiator 변수(= user_master.user_name)다.
+      모든 조회를 assignee 로 거르므로 남의 태스크가 목록에 섞이지 않는다.
+-->
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             typeLanguage="http://www.w3.org/2001/XMLSchema"
+             expressionLanguage="http://www.w3.org/1999/XPath"
+             targetNamespace="http://www.flowable.org/processdef">
+
+    <process id="simpleTaskProcess" name="단순 3단계 워크플로우" isExecutable="true">
+
+        <startEvent id="start" name="태스크 생성"/>
+        <sequenceFlow id="flowStartToStep1" sourceRef="start" targetRef="step1"/>
+
+        <userTask id="step1" name="스텝1" flowable:assignee="${initiator}"/>
+        <sequenceFlow id="flowStep1ToStep2" sourceRef="step1" targetRef="step2"/>
+
+        <userTask id="step2" name="스텝2" flowable:assignee="${initiator}"/>
+        <sequenceFlow id="flowStep2ToStep3" sourceRef="step2" targetRef="step3"/>
+
+        <userTask id="step3" name="스텝3" flowable:assignee="${initiator}"/>
+        <sequenceFlow id="flowStep3ToEnd" sourceRef="step3" targetRef="end"/>
+
+        <endEvent id="end" name="종료"/>
+
+    </process>
+
+</definitions>

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.UserMasterMapper">
+
+    <resultMap id="userMasterResultMap" type="kr.co.jihun.guisample.dto.UserMasterDTO">
+        <id     property="userId"        column="user_id"/>
+        <result property="keycloakId"    column="keycloak_id"/>
+        <result property="userName"      column="user_name"/>
+        <result property="email"         column="email"/>
+        <result property="displayName"   column="display_name"/>
+        <result property="status"        column="status"/>
+        <result property="lastLoginDate" column="last_login_date"/>
+        <result property="updateUserId"  column="update_user_id"/>
+        <result property="updateDate"    column="update_date"/>
+        <result property="createUserId"  column="create_user_id"/>
+        <result property="createDate"    column="create_date"/>
+    </resultMap>
+
+    <sql id="userMasterColumns">
+        user_id,
+        keycloak_id,
+        user_name,
+        email,
+        display_name,
+        status,
+        last_login_date,
+        update_user_id,
+        update_date,
+        create_user_id,
+        create_date
+    </sql>
+
+    <select id="selectUserMasterByKeycloakId"
+            resultMap="userMasterResultMap">
+        SELECT
+            <include refid="userMasterColumns"/>
+        FROM
+            user_master
+        WHERE
+            keycloak_id = #{keycloakId}
+    </select>
+
+    <!--
+        keycloak_id 중복 등록 방지를 INSERT 문 자체에 넣는다.
+        user_id 는 매번 새 UUID 라 PK 충돌로는 중복을 막을 수 없으므로,
+        NOT EXISTS 조건으로 "없을 때만 INSERT" 를 한 문장으로 처리한다.
+        (동시 요청 완전 차단은 keycloak_id UNIQUE 인덱스가 필요 — 서비스 주석 참조)
+    -->
+    <insert id="insertUserMaster"
+            parameterType="kr.co.jihun.guisample.dto.UserMasterDTO">
+        INSERT INTO user_master (
+            user_id,
+            keycloak_id,
+            user_name,
+            email,
+            display_name,
+            status,
+            last_login_date,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        )
+        SELECT
+            #{userId},
+            #{keycloakId},
+            #{userName},
+            #{email},
+            #{displayName},
+            #{status},
+            NOW(),
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM user_master
+            WHERE keycloak_id = #{keycloakId}
+        )
+    </insert>
+
+</mapper>

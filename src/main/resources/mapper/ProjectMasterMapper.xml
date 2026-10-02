@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.ProjectMasterMapper">
+
+    <resultMap id="projectMasterResultMap" type="kr.co.jihun.guisample.dto.ProjectMasterDTO">
+        <id     property="projectId"         column="project_id"/>
+        <result property="projectName"       column="project_name"/>
+        <result property="projectOwnerName"  column="project_owner_name"/>
+        <result property="projectDescription" column="project_description"/>
+        <result property="updateUserId"      column="update_user_id"/>
+        <result property="updateDate"        column="update_date"/>
+        <result property="createUserId"      column="create_user_id"/>
+        <result property="createDate"        column="create_date"/>
+    </resultMap>
+
+    <sql id="projectMasterColumns">
+        project_id,
+        project_name,
+        project_owner_name,
+        project_description,
+        update_user_id,
+        update_date,
+        create_user_id,
+        create_date
+    </sql>
+
+    <sql id="projectMasterWhere">
+        <where>
+            <if test="projectId != null and projectId != ''">
+                AND project_id = #{projectId}
+            </if>
+            <if test="projectName != null and projectName != ''">
+                AND project_name LIKE CONCAT('%', #{projectName}, '%')
+            </if>
+            <if test="projectOwnerName != null and projectOwnerName != ''">
+                AND project_owner_name LIKE CONCAT('%', #{projectOwnerName}, '%')
+            </if>
+            <!--
+                로그인 사용자 필터 — 컨트롤러가 세션의 user_name 을 createUserId 로 넣어 준다.
+                project_owner_name(담당자, 화면 입력값)이 아니라 create_user_id(생성자)가 기준이다.
+            -->
+            <if test="createUserId != null and createUserId != ''">
+                AND create_user_id = #{createUserId}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectProjectMasterList" parameterType="hashmap" resultMap="projectMasterResultMap">
+        SELECT
+            <include refid="projectMasterColumns"/>
+        FROM
+            project_master
+        <include refid="projectMasterWhere"/>
+        ORDER BY create_date DESC
+        <if test="pageSize != null">
+            LIMIT #{pageSize} OFFSET #{startRow}
+        </if>
+    </select>
+
+    <!--
+        단건 조회에도 로그인 사용자 조건을 건다.
+        목록만 필터하면 project_id 를 아는 사용자가 남의 프로젝트 상세를 그대로 열 수 있다.
+        project_id 는 단건 조회의 필수 조건이므로 <if> 로 감싸지 않는다 —
+        빠지면 전체 스캔이 되어 TooManyResults 로 터지기 때문이다.
+    -->
+    <select id="selectProjectMaster"
+            parameterType="hashmap"
+            resultMap="projectMasterResultMap">
+        SELECT
+            <include refid="projectMasterColumns"/>
+        FROM
+            project_master
+        WHERE
+            project_id = #{projectId}
+            <if test="createUserId != null and createUserId != ''">
+                AND create_user_id = #{createUserId}
+            </if>
+    </select>
+
+    <select id="countProjectMaster"
+            parameterType="hashmap"
+            resultType="int">
+        SELECT
+            COUNT(*)
+        FROM
+            project_master
+        <include refid="projectMasterWhere"/>
+    </select>
+
+    <insert id="insertProjectMaster" parameterType="kr.co.jihun.guisample.dto.ProjectMasterDTO">
+        INSERT INTO project_master (
+            project_id,
+            project_name,
+            project_owner_name,
+            project_description,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        ) VALUES (
+            #{projectId},
+            #{projectName},
+            #{projectOwnerName},
+            #{projectDescription},
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        )
+    </insert>
+
+    <!--
+        수정도 소유자(create_user_id)가 일치할 때만 반영한다.
+        조건에 쓰는 createUserId 는 @RequestBody 로 들어온 DTO 가 아니라 세션에서 온 별도 파라미터다
+        (DTO 값을 쓰면 클라이언트가 소유자 검사를 통과시킬 수 있다 — Mapper 주석 참조).
+        create_user_id 는 SET 대상이 아니므로 소유자가 바뀌지 않는다.
+        project_owner_name(담당자)도 등록 시 세션 사용자로 고정되며 수정할 수 없으므로 SET 대상이 아니다.
+    -->
+    <update id="updateProjectMaster">
+        UPDATE project_master
+        SET
+            project_name        = #{project.projectName},
+            project_description = #{project.projectDescription},
+            update_user_id      = #{project.updateUserId},
+            update_date        = NOW()
+        WHERE
+            project_id = #{project.projectId}
+            <if test="createUserId != null and createUserId != ''">
+                AND create_user_id = #{createUserId}
+            </if>
+    </update>
+
+</mapper>

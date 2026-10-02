@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.ChatMasterMapper">
+
+    <resultMap id="chatMasterResultMap" type="kr.co.jihun.guisample.dto.ChatMasterDTO">
+        <id     property="chatSessionId"    column="chat_session_id"/>
+        <result property="chatTitleName"    column="chat_title_name"/>
+        <result property="chatOwnerUserId"  column="chat_owner_user_id"/>
+        <result property="updateUserId"     column="update_user_id"/>
+        <result property="updateDate"       column="update_date"/>
+        <result property="createUserId"     column="create_user_id"/>
+        <result property="createDate"       column="create_date"/>
+    </resultMap>
+
+    <sql id="chatMasterColumns">
+        chat_session_id,
+        chat_title_name,
+        chat_owner_user_id,
+        update_user_id,
+        update_date,
+        create_user_id,
+        create_date
+    </sql>
+
+    <sql id="chatMasterWhere">
+        <where>
+            <if test="chatSessionId != null and chatSessionId != ''">
+                AND chat_session_id = #{chatSessionId}
+            </if>
+            <if test="chatOwnerUserId != null and chatOwnerUserId != ''">
+                AND chat_owner_user_id = #{chatOwnerUserId}
+            </if>
+            <if test="chatTitleName != null and chatTitleName != ''">
+                AND chat_title_name LIKE CONCAT('%', #{chatTitleName}, '%')
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectChatMasterList"
+            parameterType="hashmap"
+            resultMap="chatMasterResultMap">
+        SELECT
+            <include refid="chatMasterColumns"/>
+        FROM
+            chat_master
+        <include refid="chatMasterWhere"/>
+        ORDER BY create_date DESC
+        <if test="pageSize != null">
+            LIMIT #{pageSize} OFFSET #{startRow}
+        </if>
+    </select>
+
+    <select id="countChatMaster"
+            parameterType="hashmap"
+            resultType="int">
+        SELECT
+            COUNT(*)
+        FROM
+            chat_master
+        <include refid="chatMasterWhere"/>
+    </select>
+
+    <!--
+        단건 조회에도 소유자 조건을 건다.
+        세션 ID 를 아는 사용자가 남의 대화를 열거나 제목을 바꾸는 것을 막는다.
+        chat_session_id 는 필수 조건이므로 <if> 로 감싸지 않는다.
+    -->
+    <select id="selectChatMaster"
+            resultMap="chatMasterResultMap">
+        SELECT
+            <include refid="chatMasterColumns"/>
+        FROM
+            chat_master
+        WHERE
+            chat_session_id = #{sessionId}
+            <if test="ownerUserId != null and ownerUserId != ''">
+                AND chat_owner_user_id = #{ownerUserId}
+            </if>
+    </select>
+
+    <!--
+        제목 변경도 소유자 조건을 함께 건다.
+        서비스가 조회로 소유권을 먼저 확인하지만, 그 사이 소유자가 바뀌는 경우까지 막으려면
+        UPDATE 문 자체에 조건이 있어야 한다(확인과 수정이 한 문장에서 원자적으로 끝난다).
+    -->
+    <update id="updateChatMasterTitle">
+        UPDATE chat_master
+        SET
+            chat_title_name = #{title},
+            update_user_id  = #{updateUserId},
+            update_date     = NOW()
+        WHERE
+            chat_session_id = #{sessionId}
+            <if test="ownerUserId != null and ownerUserId != ''">
+                AND chat_owner_user_id = #{ownerUserId}
+            </if>
+    </update>
+
+    <insert id="insertChatMaster" parameterType="kr.co.jihun.guisample.dto.ChatMasterDTO">
+        INSERT INTO chat_master (
+            chat_session_id,
+            chat_title_name,
+            chat_owner_user_id,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        ) VALUES (
+            #{chatSessionId},
+            #{chatTitleName},
+            #{chatOwnerUserId},
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        )
+    </insert>
+
+</mapper>

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.CategoryMasterMapper">
+
+    <resultMap id="categoryMasterResultMap" type="kr.co.jihun.guisample.dto.CategoryMasterDTO">
+        <id     property="categoryId"    column="category_id"/>
+        <result property="categoryName"  column="category_name"/>
+        <result property="updateUserId"  column="update_user_id"/>
+        <result property="updateDate"    column="update_date"/>
+        <result property="createUserId"  column="create_user_id"/>
+        <result property="createDate"    column="create_date"/>
+    </resultMap>
+
+    <sql id="categoryMasterColumns">
+        category_id,
+        category_name,
+        update_user_id,
+        update_date,
+        create_user_id,
+        create_date
+    </sql>
+
+    <sql id="categoryMasterWhere">
+        <where>
+            <if test="categoryId != null and categoryId != ''">
+                AND category_id = #{categoryId}
+            </if>
+            <if test="categoryName != null and categoryName != ''">
+                AND category_name LIKE CONCAT('%', #{categoryName}, '%')
+            </if>
+            <!-- 로그인 사용자 필터 — 컨트롤러가 세션의 user_name 을 createUserId 로 넣어 준다. -->
+            <if test="createUserId != null and createUserId != ''">
+                AND create_user_id = #{createUserId}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectCategoryMasterList"
+            parameterType="hashmap"
+            resultMap="categoryMasterResultMap">
+        SELECT
+            <include refid="categoryMasterColumns"/>
+        FROM
+            category_master
+        <include refid="categoryMasterWhere"/>
+        ORDER BY create_date DESC
+        <if test="pageSize != null">
+            LIMIT #{pageSize} OFFSET #{startRow}
+        </if>
+    </select>
+
+    <select id="countCategoryMaster"
+            parameterType="hashmap"
+            resultType="int">
+        SELECT
+            COUNT(*)
+        FROM
+            category_master
+        <include refid="categoryMasterWhere"/>
+    </select>
+
+    <insert id="insertCategoryMaster"
+            parameterType="kr.co.jihun.guisample.dto.CategoryMasterDTO">
+        INSERT INTO category_master (
+            category_id,
+            category_name,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        ) VALUES (
+            #{categoryId},
+            #{categoryName},
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        )
+    </insert>
+
+</mapper>

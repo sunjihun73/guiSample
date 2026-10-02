@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.KnowledgeFileMapper">
+
+    <resultMap id="knowledgeFileResultMap" type="kr.co.jihun.guisample.dto.KnowledgeFileDTO">
+        <id     property="fileId"        column="file_id"/>
+        <result property="categoryId"    column="category_id"/>
+        <result property="fileName"      column="file_name"/>
+        <result property="updateUserId"  column="update_user_id"/>
+        <result property="updateDate"    column="update_date"/>
+        <result property="createUserId"  column="create_user_id"/>
+        <result property="createDate"    column="create_date"/>
+        <result property="categoryName"  column="category_name"/>
+    </resultMap>
+
+    <sql id="knowledgeFileWhere">
+        <where>
+            <if test="fileId != null and fileId != ''">
+                AND kf.file_id = #{fileId}
+            </if>
+            <if test="categoryId != null and categoryId != ''">
+                AND kf.category_id = #{categoryId}
+            </if>
+            <if test="fileName != null and fileName != ''">
+                AND kf.file_name LIKE CONCAT('%', #{fileName}, '%')
+            </if>
+            <!-- 로그인 사용자 필터 — 컨트롤러가 세션의 user_name 을 createUserId 로 넣어 준다. -->
+            <if test="createUserId != null and createUserId != ''">
+                AND kf.create_user_id = #{createUserId}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectKnowledgeFileList"
+            parameterType="hashmap"
+            resultMap="knowledgeFileResultMap">
+        SELECT
+            kf.file_id,
+            kf.category_id,
+            kf.file_name,
+            kf.update_user_id,
+            kf.update_date,
+            kf.create_user_id,
+            kf.create_date,
+            cm.category_name
+        FROM
+            knowledge_files kf
+            LEFT JOIN category_master cm ON cm.category_id = kf.category_id
+        <include refid="knowledgeFileWhere"/>
+        ORDER BY kf.create_date DESC
+        <if test="pageSize != null">
+            LIMIT #{pageSize} OFFSET #{startRow}
+        </if>
+    </select>
+
+    <select id="countKnowledgeFile"
+            parameterType="hashmap"
+            resultType="int">
+        SELECT
+            COUNT(*)
+        FROM
+            knowledge_files kf
+        <include refid="knowledgeFileWhere"/>
+    </select>
+
+    <!-- vector_store 청크 조회용 ResultMap. metadata(json) 에서 ->> 로 추출한 별칭 컬럼을 매핑. -->
+    <resultMap id="knowledgeChunkResultMap" type="kr.co.jihun.guisample.dto.KnowledgeChunkDTO">
+        <id     property="chunkId"          column="chunk_id"/>
+        <result property="parentDocumentId" column="parent_document_id"/>
+        <result property="categoryId"       column="category_id"/>
+        <result property="chunkIndex"       column="chunk_index"/>
+        <result property="totalChunks"      column="total_chunks"/>
+        <result property="content"          column="content"/>
+    </resultMap>
+
+    <select id="selectKnowledgeChunkList"
+            parameterType="hashmap"
+            resultMap="knowledgeChunkResultMap">
+        SELECT
+            vs.id                                       AS chunk_id,
+            vs.metadata ->> 'parent_document_id'        AS parent_document_id,
+            vs.metadata ->> 'category_id'               AS category_id,
+            (vs.metadata ->> 'chunk_index')::int        AS chunk_index,
+            (vs.metadata ->> 'total_chunks')::int       AS total_chunks,
+            vs.content
+        FROM
+            vector_store vs
+        WHERE
+            vs.metadata ->> 'parent_document_id' = #{parentDocumentId}
+        ORDER BY
+            (vs.metadata ->> 'chunk_index')::int ASC
+    </select>
+
+    <!-- dense 검색 소유권 필터용. 조건은 knowledgeFileWhere 조각을 그대로 재사용한다. -->
+    <select id="selectOwnedFileIdList" parameterType="hashmap" resultType="string">
+        SELECT kf.file_id
+        FROM knowledge_files kf
+        <include refid="knowledgeFileWhere"/>
+        ORDER BY kf.file_id
+    </select>
+
+    <insert id="insertKnowledgeFile"
+            parameterType="kr.co.jihun.guisample.dto.KnowledgeFileDTO">
+        INSERT INTO knowledge_files (
+            file_id,
+            category_id,
+            file_name,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        ) VALUES (
+            #{fileId},
+            #{categoryId},
+            #{fileName},
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        )
+    </insert>
+
+</mapper>

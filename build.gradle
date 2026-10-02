@@ -1,0 +1,68 @@
+plugins {
+    id 'java'
+    id 'war'
+    id 'org.springframework.boot' version '4.0.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'kr.co.jihun'
+version = '0.0.1-SNAPSHOT'
+description = 'guiSample'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.ai:spring-ai-bom:2.0.0-M4"
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    compileOnly 'org.projectlombok:lombok'
+
+    // Security — Keycloak(OIDC) SSO 로그인
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+    annotationProcessor 'org.projectlombok:lombok'
+    providedRuntime 'org.springframework.boot:spring-boot-starter-tomcat-runtime'
+    providedRuntime 'org.apache.tomcat.embed:tomcat-embed-jasper'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testCompileOnly 'org.projectlombok:lombok'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    // Database
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // MYBATIS
+    implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:4.0.1'
+
+    // Spring AI
+    implementation 'org.springframework.ai:spring-ai-starter-model-openai'
+    implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
+
+    // Playwright
+    implementation("com.microsoft.playwright:playwright:1.60.0")
+
+    // actuator
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Workflow — Flowable BPMN 엔진
+    // 8.0.0 이 Spring Boot 4 라인(4.0.2 기준)에 맞춘 첫 릴리스다. 7.x 는 Boot 3 전용이라 쓸 수 없다.
+    implementation 'org.flowable:flowable-spring-boot-starter-process:8.0.0'
+}
+
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

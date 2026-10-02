@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.KeywordSearchMapper">
+
+    <resultMap id="keywordHitResultMap" type="kr.co.jihun.guisample.dto.KeywordHitDTO">
+        <id     property="chunkId"          column="chunk_id"/>
+        <result property="parentDocumentId" column="parent_document_id"/>
+        <result property="content"          column="content"/>
+        <result property="bm25Score"        column="bm25_score"/>
+        <result property="bm25Norm"         column="bm25_norm"/>
+    </resultMap>
+
+    <!-- 소유권 + 카테고리 + bigram 매칭 조건.
+         vector_store 에는 사용자 컬럼이 없으므로 metadata->>'parent_document_id' 로
+         knowledge_files 를 조인해 상위 엔터티의 소유권을 건다
+         (ChatService.selectMessages / KnowledgeFileService.selectKnowledgeChunkList 와 같은 패턴). -->
+    <sql id="bm25ScopeWhere">
+        <where>
+            AND kf.create_user_id = #{createUserId}
+            AND vs.content_bigram @@ q_query.tsq
+            <if test="categoryId != null and categoryId != ''">
+                AND kf.category_id = #{categoryId}
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectBm25TopChunks" parameterType="hashmap" resultMap="keywordHitResultMap">
+        WITH q_terms AS (
+            /* 질의 bigram. 문서 색인과 "같은 함수" 를 쓰므로 토크나이즈 비대칭이 원천 차단된다. */
+            SELECT DISTINCT u.lexeme
+            FROM   unnest(public.bm25_bigram_tsvector(#{query})) AS u
+        ),
+        q_query AS (
+            /* GIN 후보 축소용 OR tsquery.
+               bigram 은 2자 영숫자/한글뿐이고 quote_literal 로 감싸므로 주입 위험이 없다.
+               질의 bigram 이 0개면 string_agg → NULL → tsq NULL → @@ NULL → 0건(안전). */
+            SELECT to_tsquery('simple', string_agg(quote_literal(lexeme), ' | ')) AS tsq
+            FROM   q_terms
+        ),
+        corpus AS (
+            /* 통계 테이블이 비어 있으면(bm25_refresh_stats 미실행) 즉석 계산으로 폴백한다.
+               "조용히 0건" 대신 "느리지만 동작" 으로 떨어뜨리기 위한 안전망. */
+            SELECT x.n, x.avgdl
+            FROM (
+                SELECT 1 AS pri, cs.doc_count::numeric AS n, cs.avg_doc_len::numeric AS avgdl
+                FROM   public.vector_store_bm25_corpus_stats cs
+                WHERE  cs.stats_key = 'GLOBAL' AND cs.doc_count > 0
+                UNION ALL
+                SELECT 2 AS pri, COUNT(*)::numeric,
+                       COALESCE(AVG(NULLIF(vs2.bigram_len, 0)), 1)::numeric
+                FROM   public.vector_store vs2
+                WHERE  vs2.content_bigram IS NOT NULL
+            ) x
+            ORDER BY x.pri
+            LIMIT 1
+        ),
+        cand AS (
+            SELECT vs.id,
+                   vs.content,
+                   vs.content_bigram,
+                   vs.bigram_len,
+                   vs.metadata ->> 'parent_document_id' AS parent_document_id
+            FROM   public.vector_store vs
+                   JOIN public.knowledge_files kf
+                        ON kf.file_id = vs.metadata ->> 'parent_document_id'
+                   CROSS JOIN q_query
+            <include refid="bm25ScopeWhere"/>
+        ),
+        scored AS (
+            /* BM25 = SUM( IDF * (tf*(k1+1)) / (tf + k1*(1-b+b*len/avgdl)) ), k1=1.2, b=0.75.
+               k1/b 는 바인드하지 않고 리터럴로 둔다 — 요청별 값이 아니고,
+               PostgreSQL 의 파라미터 타입 추론(numeric vs double) 시비를 피한다.
+               튜닝이 필요해 파라미터로 빼려면 numeric 으로 명시 캐스팅할 것.
+
+               ★ 주의: MyBatis 의 파라미터 치환은 SQL 주석 안도 구분하지 않는다.
+                 주석에 파라미터 표기를 예시로 적으면 실제 바인딩으로 잡혀서
+                 "column index is out of range" 로 죽는다. 주석에 쓰지 말 것.
+
+               COALESCE(ts.df, 1): 통계 갱신 전에 들어온 새 bigram 은 "1개 문서에 등장" 으로 본다.
+               df=0 으로 두면 IDF 가 최대로 뛰어 단일 청크가 상위를 독식한다. */
+            SELECT c.id,
+                   c.content,
+                   c.parent_document_id,
+                   SUM(
+                       ln(1 + (cp.n - COALESCE(ts.df, 1) + 0.5) / (COALESCE(ts.df, 1) + 0.5))
+                       * (tf.v * (1.2 + 1))
+                       / (tf.v + 1.2 * (1 - 0.75 + 0.75 * c.bigram_len / NULLIF(cp.avgdl, 0)))
+                   ) AS bm25_score
+            FROM   cand c
+                   CROSS JOIN corpus cp
+                   CROSS JOIN LATERAL unnest(c.content_bigram) AS t(lexeme, positions, weights)
+                   JOIN q_terms qt ON qt.lexeme = t.lexeme
+                   LEFT JOIN public.vector_store_bm25_term_stats ts ON ts.lexeme = t.lexeme
+                   CROSS JOIN LATERAL (SELECT COALESCE(array_length(t.positions, 1), 1)::numeric AS v) tf
+            GROUP BY c.id, c.content, c.parent_document_id
+        )
+        SELECT s.id::text          AS chunk_id,
+               s.parent_document_id AS parent_document_id,
+               s.content            AS content,
+               s.bm25_score         AS bm25_score,
+               /* 질의 bigram 수로 나눈 정규화 점수.
+                  BM25 원점수는 질의가 길수록 항이 많아 커진다 — 실측상 무관한 긴 질의(7.15)가
+                  짧은 정답 질의(2.84)보다 높게 나온다. 게이트 판정은 반드시 이 정규화 값으로 할 것. */
+               s.bm25_score / GREATEST((SELECT COUNT(*) FROM q_terms), 1) AS bm25_norm
+        FROM   scored s
+        ORDER BY s.bm25_score DESC, chunk_id
+        LIMIT #{candidateK}
+    </select>
+
+    <!-- <update> 가 아니라 <select> 여야 한다 — 위 인터페이스 javadoc 참조. -->
+    <select id="refreshBm25Stats" resultType="int">
+        SELECT public.bm25_refresh_stats()
+    </select>
+
+</mapper>

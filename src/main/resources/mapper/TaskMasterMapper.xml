@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="kr.co.jihun.guisample.mapper.TaskMasterMapper">
+
+    <resultMap id="taskMasterResultMap" type="kr.co.jihun.guisample.dto.TaskMasterDTO">
+        <id     property="taskId"          column="task_id"/>
+        <result property="taskName"        column="task_name"/>
+        <result property="taskOwnerUserId" column="task_owner_user_id"/>
+        <result property="updateUserId"    column="update_user_id"/>
+        <result property="updateDate"      column="update_date"/>
+        <result property="createUserId"    column="create_user_id"/>
+        <result property="createDate"      column="create_date"/>
+    </resultMap>
+
+    <sql id="taskMasterColumns">
+        task_id,
+        task_name,
+        task_owner_user_id,
+        update_user_id,
+        update_date,
+        create_user_id,
+        create_date
+    </sql>
+
+    <!--
+        태스크 ID 목록으로 업무 정보를 한 번에 조회한다.
+        소유자 조건을 함께 걸어, 엔진 쪽 필터(assignee)와 어긋나더라도 남의 이름이 섞이지 않게 한다.
+        taskIds 가 비어 있으면 IN () 이 되어 문법 오류다 — 호출측(TaskMasterService)에서 막는다.
+    -->
+    <select id="selectTaskMasterListByIds" resultMap="taskMasterResultMap">
+        SELECT
+            <include refid="taskMasterColumns"/>
+        FROM
+            task_master
+        WHERE
+            task_owner_user_id = #{taskOwnerUserId}
+            AND task_id IN
+            <foreach item="id" collection="taskIds" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+    </select>
+
+    <insert id="insertTaskMaster" parameterType="kr.co.jihun.guisample.dto.TaskMasterDTO">
+        INSERT INTO task_master (
+            task_id,
+            task_name,
+            task_owner_user_id,
+            create_user_id,
+            create_date,
+            update_user_id,
+            update_date
+        ) VALUES (
+            #{taskId},
+            #{taskName},
+            #{taskOwnerUserId},
+            #{createUserId},
+            NOW(),
+            #{updateUserId},
+            NOW()
+        )
+    </insert>
+
+</mapper>
