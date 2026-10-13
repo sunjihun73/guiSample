@@ -14,6 +14,7 @@
  *   #popupReqId / #popupRepoUrl / #popupFileNames  요청 ID / 저장소 URL / 파일명 입력
  *   td[aria-describedby="projectGrid_reqId"]  요청 ID 셀 (담당자 컬럼 바로 뒤)
  *   .btn-detail                    행의 "상세" 버튼 (수정 팝업 오픈)
+ *   #btnRepoSync                   REPO동기화 버튼 (결과는 alert 요약)
  *   #popupProjectDescription_ifr   프로젝트 설명 - TinyMCE iframe (textarea를 대체)
  *   #btnPopupSave / #btnPopupCancel / #btnPopupClose  저장 / 취소 / 닫기
  */
@@ -244,5 +245,29 @@ test.describe('프로젝트 목록 화면', () => {
     });
 
     expect(alerts).toEqual([]);
+  });
+
+  test('REPO동기화 버튼을 누르면 동기화 API 가 호출되고 결과 요약이 표시된다', async ({ page }) => {
+    // 결과 건수는 계정의 기존 데이터·저장소 상태에 따라 달라지므로 호출 성공과 응답 shape 만 본다.
+    const synced = page.waitForResponse(
+      (res) => res.url().includes(`${PROJECT_API}/repo-sync`) && res.request().method() === 'POST',
+      { timeout: 60_000 }
+    );
+    await page.locator('#btnRepoSync').click();
+
+    const response = await synced;
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ success: true });
+    expect(body.result).toEqual(expect.objectContaining({
+      lookbackDays: 30,
+      total: expect.any(Number),
+      updated: expect.any(Number),
+      items: expect.any(Array),
+    }));
+
+    await expect.poll(() => alerts.length).toBe(1);
+    expect(alerts[0]).toMatch(/REPO동기화 완료|동기화 대상 프로젝트가 없습니다/);
+    await expect(page.locator('#btnRepoSync')).toBeEnabled();
   });
 });

@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun   # e2e 프로파일로 기동
 ```
 
-`src/test` 가 없으므로 `./gradlew test` 는 아무 테스트도 돌리지 않는다. **이 프로젝트의 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
+`./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
 
 Java 툴체인은 **21** (`build.gradle`). README.md 의 "Java 17" 표기는 오래된 값이다.
 
@@ -37,7 +37,7 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 직접 의존한�
 
 - `application.yaml` 은 **프로파일 선택만** 한다: `spring.profiles.active: ${SPRING_PROFILES_ACTIVE:local}`.
 - 실제 설정은 전부 `application-local.yaml` / `application-e2e.yaml` 에 **각각 완전한 형태로** 들어 있다. 두 파일의 현재 유일한 차이는 `spring.ai.openai.chat.options.model` (`gpt-4o-mini` vs `e2e-mock`). **설정을 바꿀 때는 두 파일을 함께 고쳐야 한다.**
-- 비밀값은 루트 `.env`(gitignore) 에서 `spring.config.import: optional:file:.env[.properties]` 로 주입: `OPENAI_API_KEY`, `KEYCLOAK_CLIENT_SECRET`, `UPLOAD_FILE_PATH`.
+- 비밀값은 루트 `.env`(gitignore) 에서 `spring.config.import: optional:file:.env[.properties]` 로 주입: `OPENAI_API_KEY`, `KEYCLOAK_CLIENT_SECRET`, `UPLOAD_FILE_PATH`, `GITHUB_TOKEN`(선택 — 없으면 공개 저장소만·시간당 60회).
 - OpenAI 호출은 실제 OpenAI 가 아니라 **LiteLLM 프록시**(`base-url: http://litellm.jihun.com`)를 거친다. 가드레일도 LiteLLM 쪽에 있다.
 
 ## 아키텍처
@@ -84,6 +84,13 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - userTask id(`step1`/`step2`/`step3`)가 REST 의 `step` 파라미터·화면 파일명과 1:1 이다. **id 를 바꾸면 `WorkflowService.STEP_KEYS` 와 스텝 화면 3개를 함께 고쳐야 한다.**
 - 완료 요청은 태스크 id 와 함께 **화면의 단계(`step`)를 같이 보낸다** — 오래된 목록으로 이미 넘어간 태스크를 다시 완료하는 것을 서버가 거부한다.
 
+### REPO동기화 — 저장소 커밋 → `project_master.file_names`
+
+- 프로젝트 목록의 **REPO동기화** 버튼 → `POST /user/project/projects/repo-sync` → `RepoSyncService`. `repo_url`·`req_id` 가 모두 있는 **전체 프로젝트**가 대상이며(**데이터 소유권 규칙의 의도된 예외** — 대상 선정·UPDATE 모두 소유자/사용자 이름 조건 없음, `update_user_id` 에 실행자만 기록), 최근 `scm.sync.lookback-days`(30)일 커밋 메시지의 `{…}` 값이 `req_id` 와 **정확히 일치**하는 커밋들의 변경 파일 합집합(정렬·줄바꿈 구분)으로 `file_names` 를 **교체**한다. 일치 커밋이 없으면 기존 값을 그대로 둔다.
+- 저장소 종류는 `scm` 패키지의 **`ScmClient` 인터페이스 뒤에 숨긴다**. `ScmClientResolver` 가 `supports(repoUrl)` 로 구현을 고르므로, GitLab·SVN 등은 **구현체 빈을 하나 추가**하면 되고 `RepoSyncService` 는 손대지 않는다. 현재 구현은 `scm/github/GitHubScmClient` 하나(설정 `scm.github.*`, 두 프로파일 yaml 모두).
+- GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 2개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
+- 외부 HTTP 를 기다리는 동안 커넥션을 잡지 않도록 트랜잭션 없이 프로젝트 단위로 UPDATE 한다. 저장소 하나가 실패해도 나머지는 진행되고, 실패는 결과 항목 `FAILED` 로 돌아온다.
+
 ### 프론트 규약 (JSP)
 
 - 뷰는 `src/main/webapp/WEB-INF/views/`, 라우팅은 `MainController`(`/user/**`). 스타일은 `static/css/common.css` 단일 파일(화면별 인라인 스타일 금지).
@@ -123,3 +130,4 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 | 2026-09-09 | 아키텍처·설정·E2E 섹션 보강 (/init) | 전체 | 코드 실사와 문서 불일치 해소 |
 | 2026-09-17 | 하이브리드 검색(BM25+RRF)·RAG 소유권 필터 반영 | RAG·소유권·스키마 | ADR 0005 |
 | 2026-09-22 | Flowable 워크플로우(스텝1~3 + 종료 조회 화면) 추가 | 워크플로우·DataSource·사이드바 | 전용 DB(flowable-db) 분리, 사이드바 공통화 |
+| 2026-10-13 | 프로젝트 req_id/repo_url/file_names 컬럼, REPO동기화(ScmClient 추상화 + GitHub 구현) 추가 | 프로젝트·scm·src/test | 저장소 종류 확장(SVN 등) 대비 |

@@ -1,6 +1,8 @@
 package kr.co.jihun.guisample.controller.user;
 
+import kr.co.jihun.guisample.dto.RepoSyncResult;
 import kr.co.jihun.guisample.service.ProjectMasterService;
+import kr.co.jihun.guisample.service.RepoSyncService;
 import kr.co.jihun.guisample.dto.ProjectMasterDTO;
 import kr.co.jihun.guisample.session.LoginUserSession;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +32,7 @@ import java.util.Map;
 public class ProjectMasterRestController
 {
     private final ProjectMasterService projectMasterService;
+    private final RepoSyncService repoSyncService;
     private final LoginUserSession loginUserSession;
 
     @GetMapping("/projects")
@@ -132,6 +135,29 @@ public class ProjectMasterRestController
             {
                 result.put("message", "수정 대상 프로젝트를 찾을 수 없습니다.");
             }
+        }
+        catch (Exception e)
+        {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * REPO동기화 — 소유자와 무관하게 전체 프로젝트마다 repo_url 저장소의 최근 커밋을 읽어
+     * 커밋 메시지의 {req_id} 가 일치하는 커밋의 변경 파일로 file_names 를 갱신한다.
+     * 저장소별 실패는 결과 항목(FAILED)으로 돌려주고, 전체가 실패할 때만 success=false 다.
+     */
+    @PostMapping("/projects/repo-sync")
+    public Map<String, Object> syncRepository()
+    {
+        Map<String, Object> result = new HashMap<>();
+        try
+        {
+            RepoSyncResult sync = repoSyncService.syncFileNames(loginUserSession.requireUserName());
+            result.put("success", true);
+            result.put("result",  sync);
         }
         catch (Exception e)
         {

@@ -146,4 +146,19 @@
             </if>
     </update>
 
+    <!--
+        REPO동기화 — 저장소 커밋에서 추출한 파일 목록으로 file_names 만 교체한다.
+        동기화는 소유자와 무관하게 전체 프로젝트를 대상으로 하므로 소유자(create_user_id) 조건을 걸지 않는다.
+        update_user_id 는 검증이 아니라 동기화를 실행한 사용자 기록이다.
+    -->
+    <update id="updateProjectFileNames">
+        UPDATE project_master
+        SET
+            file_names     = #{fileNames},
+            update_user_id = #{updateUserId},
+            update_date    = NOW()
+        WHERE
+            project_id     = #{projectId}
+    </update>
+
 </mapper>

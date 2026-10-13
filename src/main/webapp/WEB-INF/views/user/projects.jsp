@@ -80,6 +80,15 @@
                     </svg>
                     등록
                 </button>
+                <%-- REPO동기화 — 각 프로젝트의 repo_url 저장소에서 최근 커밋 중 {req_id} 가 일치하는
+                     커밋의 변경 파일로 file_names 를 갱신한다 (POST /user/project/projects/repo-sync). --%>
+                <button type="button" id="btnRepoSync" class="search-form__btn search-form__btn--ghost">
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                        <path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        <path d="M11.8 2v2.6H9.2M4.2 14v-2.6h2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    REPO동기화
+                </button>
             </div>
         </form>
 
@@ -421,7 +430,53 @@
                 });
         });
 
+        /* ── REPO동기화 ── */
+        let repoSyncUrl = saveUrl + "/repo-sync";
+
+        // 서버 결과(RepoSyncResult)를 alert 한 장으로 요약한다. 실패 건은 사유까지 보여 준다.
+        function repoSyncSummary(r) {
+            if (r.total === 0) {
+                return "동기화 대상 프로젝트가 없습니다.\n(저장소 URL 과 요청 ID 가 모두 입력된 프로젝트만 대상입니다.)";
+            }
+            let lines = [
+                "REPO동기화 완료 (최근 " + r.lookbackDays + "일 커밋 기준)",
+                "",
+                "대상 " + r.total + "건 / 갱신 " + r.updated + "건 / 변경없음 " + r.unchanged
+                    + "건 / 일치커밋없음 " + r.noMatch + "건 / 실패 " + r.failed + "건"
+            ];
+            r.items.filter(function (it) { return it.status === "FAILED"; })
+                .forEach(function (it) {
+                    lines.push("- [실패] " + it.projectName + " (" + it.reqId + "): " + (it.message || ""));
+                });
+            return lines.join("\n");
+        }
+
+        function syncRepository() {
+            let $btn = $("#btnRepoSync");
+            $btn.prop("disabled", true);
+
+            $.ajax({
+                url:      repoSyncUrl,
+                type:     "POST",
+                dataType: "json"
+            }).done(function (data) {
+                if (data && data.success) {
+                    alert(repoSyncSummary(data.result));
+                    $("#projectGrid").trigger("reloadGrid");
+                } else {
+                    alert("REPO동기화에 실패했습니다.\n" + ((data && data.message) || ""));
+                }
+            })
+            .fail(function (xhr, status, error) {
+                alert("REPO동기화 중 오류가 발생했습니다.\n" + status + " : " + error);
+            })
+            .always(function () {
+                $btn.prop("disabled", false);
+            });
+        }
+
         $("#btnCreate").on("click", openCreatePopup);
+        $("#btnRepoSync").on("click", syncRepository);
         $("#btnPopupCancel").on("click", closePopup);
         $("#btnPopupClose").on("click", closePopup);
         $("#projectPopupDim").on("click", closePopup);

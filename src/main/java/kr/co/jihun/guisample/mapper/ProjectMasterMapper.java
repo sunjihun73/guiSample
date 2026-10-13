@@ -31,4 +31,15 @@ public interface ProjectMasterMapper
      */
     int updateProjectMaster(@Param("project") ProjectMasterDTO projectMaster,
                             @Param("createUserId") String createUserId);
+
+    /**
+     * REPO동기화 결과 반영 — file_names 만 갱신한다.
+     * 동기화는 전체 프로젝트 대상이라 소유자 조건이 없다.
+     *
+     * @param updateUserId 동기화를 실행한 로그인 사용자명 (update_user_id 기록용)
+     * @return 반영된 행 수 (0 = 대상 없음)
+     */
+    int updateProjectFileNames(@Param("projectId") String projectId,
+                               @Param("fileNames") String fileNames,
+                               @Param("updateUserId") String updateUserId);
 }
