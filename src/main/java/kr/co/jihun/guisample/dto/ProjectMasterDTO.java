@@ -13,6 +13,9 @@ public class ProjectMasterDTO
     private String projectName;
     private String projectOwnerName;
     private String projectDescription;
+    private String reqId;
+    private String repoUrl;
+    private String fileNames;
     private String updateUserId;
     private String updateDate;
     private String createUserId;

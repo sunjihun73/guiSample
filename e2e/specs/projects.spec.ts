@@ -11,6 +11,9 @@
  *   #projectPopupTitle             팝업 제목 ("프로젝트 등록" | "프로젝트 수정")
  *   #popupProjectName              프로젝트명 입력
  *   #popupProjectOwnerName         담당자 (readonly — 로그인 사용자명 자동 셋팅)
+ *   #popupReqId / #popupRepoUrl / #popupFileNames  요청 ID / 저장소 URL / 파일명 입력
+ *   td[aria-describedby="projectGrid_reqId"]  요청 ID 셀 (담당자 컬럼 바로 뒤)
+ *   .btn-detail                    행의 "상세" 버튼 (수정 팝업 오픈)
  *   #popupProjectDescription_ifr   프로젝트 설명 - TinyMCE iframe (textarea를 대체)
  *   #btnPopupSave / #btnPopupCancel / #btnPopupClose  저장 / 취소 / 닫기
  */
@@ -37,6 +40,9 @@ const popup = (p: Page) => p.locator('#projectPopup');
 const nameInput = (p: Page) => p.locator('#popupProjectName');
 const ownerInput = (p: Page) => p.locator('#popupProjectOwnerName');
 const saveBtn = (p: Page) => p.locator('#btnPopupSave');
+const reqIdInput = (p: Page) => p.locator('#popupReqId');
+const repoUrlInput = (p: Page) => p.locator('#popupRepoUrl');
+const fileNamesInput = (p: Page) => p.locator('#popupFileNames');
 
 /** TinyMCE 본문 (contenteditable body) */
 const descBody = (p: Page) =>
@@ -169,6 +175,74 @@ test.describe('프로젝트 목록 화면', () => {
     await expect(savedRow).toContainText(ownerName);
 
     // 저장/조회 어느 단계에서도 실패 alert 가 뜨지 않아야 한다.
+    expect(alerts).toEqual([]);
+  });
+
+  test('요청 ID·저장소 URL·파일명을 등록하고 상세에서 수정할 수 있다', async ({ page }) => {
+    const m = marker();
+    const projectName = `e2e Test 프로젝트 ${m}`;
+    const reqId = `REQ-${m}`;
+    const repoUrl = `https://git.example.com/e2e/${m}.git`;
+    const fileNames = 'a.java\nb.xml';
+
+    await openCreatePopup(page);
+    await nameInput(page).fill(projectName);
+    await reqIdInput(page).fill(reqId);
+    await repoUrlInput(page).fill(repoUrl);
+    await fileNamesInput(page).fill(fileNames);
+
+    const created = page.waitForResponse(
+      (res) => res.url().includes(PROJECT_API) && res.request().method() === 'POST'
+    );
+    await saveBtn(page).click();
+    expect(await (await created).json()).toMatchObject({ success: true });
+    await expect(popup(page)).not.toHaveClass(/is-open/);
+
+    await search(page, projectName);
+    const row = gridRows(page).filter({ hasText: projectName });
+    await expect(row).toHaveCount(1);
+
+    // 요청 ID 는 담당자 컬럼 바로 뒤에 표시된다.
+    const cols = await row.locator('td').evaluateAll((tds) =>
+      tds.filter((td) => (td as HTMLElement).offsetParent !== null)
+        .map((td) => td.getAttribute('aria-describedby'))
+    );
+    expect(cols.indexOf('projectGrid_reqId')).toBe(cols.indexOf('projectGrid_projectOwnerName') + 1);
+    await expect(row.locator('td[aria-describedby="projectGrid_reqId"]')).toHaveText(reqId);
+
+    // 상세 → 수정 팝업에 저장된 값이 그대로 채워진다.
+    await row.locator('.btn-detail').click();
+    await expect(popup(page)).toHaveClass(/is-open/);
+    await expect(page.locator('#projectPopupTitle')).toHaveText('프로젝트 수정');
+    await expect(reqIdInput(page)).toHaveValue(reqId);
+    await expect(repoUrlInput(page)).toHaveValue(repoUrl);
+    await expect(fileNamesInput(page)).toHaveValue(fileNames);
+
+    const newReqId = `${reqId}-v2`;
+    const newRepoUrl = `${repoUrl}?v=2`;
+    const newFileNames = 'c.jsp';
+    await reqIdInput(page).fill(newReqId);
+    await repoUrlInput(page).fill(newRepoUrl);
+    await fileNamesInput(page).fill(newFileNames);
+
+    const updated = page.waitForResponse(
+      (res) => res.url().includes(PROJECT_API) && res.request().method() === 'PATCH'
+    );
+    await saveBtn(page).click();
+    expect(await (await updated).json()).toMatchObject({ success: true });
+    await expect(popup(page)).not.toHaveClass(/is-open/);
+
+    await search(page, projectName);
+    await expect(row.locator('td[aria-describedby="projectGrid_reqId"]')).toHaveText(newReqId);
+
+    // 수정 결과가 DB 에 반영됐는지 상세 API 로 확인한다.
+    const rowId = await row.getAttribute('id');
+    const detail = await page.request.get(`${PROJECT_API}/${encodeURIComponent(rowId ?? '')}`);
+    expect(await detail.json()).toMatchObject({
+      success: true,
+      project: { reqId: newReqId, repoUrl: newRepoUrl, fileNames: newFileNames },
+    });
+
     expect(alerts).toEqual([]);
   });
 });

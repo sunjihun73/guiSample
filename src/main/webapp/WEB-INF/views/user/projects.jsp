@@ -123,6 +123,22 @@
                 <input type="text" id="popupProjectOwnerName" class="form-field__input"
                        data-login-name="<%= loginDisplayName %>" readonly tabindex="-1">
             </div>
+            <%-- maxlength 는 project_master 컬럼 길이와 맞춘다 (req_id 100, repo_url 500, file_names text). --%>
+            <div class="form-field">
+                <label for="popupReqId" class="form-field__label">요청 ID</label>
+                <input type="text" id="popupReqId" class="form-field__input"
+                       placeholder="요청 ID를 입력하세요" maxlength="100">
+            </div>
+            <div class="form-field">
+                <label for="popupRepoUrl" class="form-field__label">저장소 URL</label>
+                <input type="text" id="popupRepoUrl" class="form-field__input"
+                       placeholder="저장소 URL을 입력하세요" maxlength="500">
+            </div>
+            <div class="form-field">
+                <label for="popupFileNames" class="form-field__label">파일명</label>
+                <textarea id="popupFileNames" class="form-field__input form-field__input--textarea"
+                          rows="3" placeholder="파일명을 입력하세요"></textarea>
+            </div>
             <div class="form-field">
                 <label for="popupProjectDescription" class="form-field__label">프로젝트 설명</label>
                 <textarea id="popupProjectDescription" name="popupProjectDescription"
@@ -232,12 +248,13 @@
             url:       listUrl,
             datatype:  "json",
             mtype:     "GET",
-            colNames:  ["프로젝트 ID", "상세", "프로젝트명", "담당자", "생성일", "생성자", "수정일", "수정자"],
+            colNames:  ["프로젝트 ID", "상세", "프로젝트명", "담당자", "요청 ID", "생성일", "생성자", "수정일", "수정자"],
             colModel: [
                 { name: "projectId",        index: "projectId",        width: 120, align: "center", hidden : true },
                 { name: "detail",           width: 70,  align: "center", sortable: false, search: false, formatter: detailButtonFormatter },
                 { name: "projectName",      index: "projectName",      width: 240 },
                 { name: "projectOwnerName", index: "projectOwnerName", width: 120, align: "center" },
+                { name: "reqId",            index: "reqId",            width: 120, align: "center" },
                 { name: "createDate",       index: "createDate",       width: 160, align: "center", formatter: dateTimeFormatter },
                 { name: "createUserId",     index: "createUserId",     width: 100, align: "center" },
                 { name: "updateDate",       index: "updateDate",       width: 160, align: "center", formatter: dateTimeFormatter },
@@ -296,6 +313,9 @@
             $("#popupProjectIdField").hide();
             $("#popupProjectId").val("");
             $("#popupProjectName").val("");
+            $("#popupReqId").val("");
+            $("#popupRepoUrl").val("");
+            $("#popupFileNames").val("");
             // 담당자 = 현재 로그인 사용자 (표시용 — 실제 저장값은 서버가 세션에서 정한다)
             $("#popupProjectOwnerName").val($("#popupProjectOwnerName").attr("data-login-name"));
             $popup.addClass("is-open").attr("aria-hidden", "false");
@@ -314,6 +334,9 @@
             $("#popupProjectId").val(project.projectId);
             $("#popupProjectName").val(project.projectName);
             $("#popupProjectOwnerName").val(project.projectOwnerName);
+            $("#popupReqId").val(project.reqId || "");
+            $("#popupRepoUrl").val(project.repoUrl || "");
+            $("#popupFileNames").val(project.fileNames || "");
             $popup.addClass("is-open").attr("aria-hidden", "false");
             ensureDescEditor();     // 팝업이 보이는 상태에서 생성해야 크기 계산이 정상
             setDescHtml(project.projectDescription || "");
@@ -351,7 +374,10 @@
                 dataType:    "json",
                 data:        JSON.stringify({
                     projectName:        projectName,
-                    projectDescription: getDescHtml()
+                    projectDescription: getDescHtml(),
+                    reqId:              $.trim($("#popupReqId").val()),
+                    repoUrl:            $.trim($("#popupRepoUrl").val()),
+                    fileNames:          $("#popupFileNames").val()
                 })
             }).done(function (data) {
                 if (data && data.success) {

@@ -8,6 +8,9 @@
         <result property="projectName"       column="project_name"/>
         <result property="projectOwnerName"  column="project_owner_name"/>
         <result property="projectDescription" column="project_description"/>
+        <result property="reqId"             column="req_id"/>
+        <result property="repoUrl"           column="repo_url"/>
+        <result property="fileNames"         column="file_names"/>
         <result property="updateUserId"      column="update_user_id"/>
         <result property="updateDate"        column="update_date"/>
         <result property="createUserId"      column="create_user_id"/>
@@ -19,6 +22,9 @@
         project_name,
         project_owner_name,
         project_description,
+        req_id,
+        repo_url,
+        file_names,
         update_user_id,
         update_date,
         create_user_id,
@@ -94,6 +100,9 @@
             project_name,
             project_owner_name,
             project_description,
+            req_id,
+            repo_url,
+            file_names,
             create_user_id,
             create_date,
             update_user_id,
@@ -103,6 +112,9 @@
             #{projectName},
             #{projectOwnerName},
             #{projectDescription},
+            #{reqId},
+            #{repoUrl},
+            #{fileNames},
             #{createUserId},
             NOW(),
             #{updateUserId},
@@ -122,6 +134,9 @@
         SET
             project_name        = #{project.projectName},
             project_description = #{project.projectDescription},
+            req_id              = #{project.reqId},
+            repo_url            = #{project.repoUrl},
+            file_names          = #{project.fileNames},
             update_user_id      = #{project.updateUserId},
             update_date        = NOW()
         WHERE
