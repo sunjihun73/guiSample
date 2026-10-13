@@ -269,7 +269,7 @@ e2e/                                   # Playwright E2E (별도 npm 프로젝트
 - 좌측 메뉴는 `views/common/sidebar.jsp` 한 곳에만 있고, 각 화면이 정적 include 로 끼웁니다.
 - CSRF 토큰은 `static/js/csrf.js` 가 jQuery ajax 에 자동 부착합니다.
 - JSP EL 은 자동 이스케이프가 없으므로 사용자 입력 문자열은 `HtmlUtils.htmlEscape` 로 직접 이스케이프합니다.
-- 워크플로우 화면은 브라우저 기본 `alert()`/`confirm()` 대신 공통 대화상자(`appDialog`)를 씁니다.
+- 워크플로우 화면과 프로젝트 목록 화면은 브라우저 기본 `alert()`/`confirm()` 대신 공통 레이어 팝업(`appDialog`, `views/common/dialog.jsp` + `static/js/dialog.js`)을 씁니다.
 
 ## 문서
 

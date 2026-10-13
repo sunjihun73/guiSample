@@ -82,7 +82,7 @@
                 </button>
                 <%-- REPO동기화 — 각 프로젝트의 repo_url 저장소에서 최근 커밋 중 {req_id} 가 일치하는
                      커밋의 변경 파일로 file_names 를 갱신한다 (POST /user/project/projects/repo-sync). --%>
-                <button type="button" id="btnRepoSync" class="search-form__btn search-form__btn--ghost">
+                <button type="button" id="btnRepoSync" class="search-form__btn search-form__btn--gray">
                     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                         <path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                         <path d="M11.8 2v2.6H9.2M4.2 14v-2.6h2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -161,11 +161,15 @@
     </div>
 </div>
 
+<%-- 알림 대화상자 — 기본 alert() 대신 쓰는 레이어 팝업(동작은 /js/dialog.js) --%>
+<%@ include file="/WEB-INF/views/common/dialog.jsp" %>
+
 <!-- jQuery / jqGrid -->
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/free-jqgrid/4.15.5/jquery.jqgrid.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/free-jqgrid/4.15.5/i18n/grid.locale-kr.min.js"></script>
 <script src="${pageContext.request.contextPath}/js/csrf.js"></script>
+<script src="${pageContext.request.contextPath}/js/dialog.js"></script>
 
 <!-- TinyMCE 6.8.6 (로컬 static 서빙, MIT) -->
 <script src="${pageContext.request.contextPath}/tinymce/tinymce.min.js"></script>
@@ -290,7 +294,7 @@
             caption:      "프로젝트",
             emptyrecords: "조회된 데이터가 없습니다.",
             loadError: function (xhr, status, error) {
-                alert("목록 조회 중 오류가 발생했습니다.\n" + status + " : " + error);
+                appDialog.warn("목록 조회 중 오류가 발생했습니다.\n" + status + " : " + error);
             }
         });
 
@@ -360,8 +364,10 @@
             let projectName = $.trim($("#popupProjectName").val());
 
             if (projectName === "") {
-                alert("프로젝트명을 입력하세요.");
-                $("#popupProjectName").trigger("focus");
+                // 대화상자는 스크립트를 멈추지 않으므로 포커스 이동은 닫힌 뒤(onClose)에 한다.
+                appDialog.warn("프로젝트명을 입력하세요.", {
+                    onClose: function () { $("#popupProjectName").trigger("focus"); }
+                });
                 return;
             }
 
@@ -393,11 +399,11 @@
                     closePopup();
                     $("#projectGrid").trigger("reloadGrid");
                 } else {
-                    alert("저장에 실패했습니다.\n" + ((data && data.message) || ""));
+                    appDialog.warn("저장에 실패했습니다.\n" + ((data && data.message) || ""));
                 }
             })
             .fail(function (xhr, status, error) {
-                alert("저장 중 오류가 발생했습니다.\n" + status + " : " + error);
+                appDialog.warn("저장 중 오류가 발생했습니다.\n" + status + " : " + error);
             })
             .always(function () {
                 $("#btnPopupSave").prop("disabled", false);
@@ -419,11 +425,11 @@
                     if (data && data.success) {
                         openEditPopup(data.project);
                     } else {
-                        alert("프로젝트 상세 조회에 실패했습니다.\n" + ((data && data.message) || ""));
+                        appDialog.warn("프로젝트 상세 조회에 실패했습니다.\n" + ((data && data.message) || ""));
                     }
                 })
                 .fail(function (xhr, status, error) {
-                    alert("프로젝트 상세 조회 중 오류가 발생했습니다.\n" + status + " : " + error);
+                    appDialog.warn("프로젝트 상세 조회 중 오류가 발생했습니다.\n" + status + " : " + error);
                 })
                 .always(function () {
                     $btn.prop("disabled", false);
@@ -433,7 +439,7 @@
         /* ── REPO동기화 ── */
         let repoSyncUrl = saveUrl + "/repo-sync";
 
-        // 서버 결과(RepoSyncResult)를 alert 한 장으로 요약한다. 실패 건은 사유까지 보여 준다.
+        // 서버 결과(RepoSyncResult)를 대화상자 한 장으로 요약한다. 실패 건은 사유까지 보여 준다.
         function repoSyncSummary(r) {
             if (r.total === 0) {
                 return "동기화 대상 프로젝트가 없습니다.\n(저장소 URL 과 요청 ID 가 모두 입력된 프로젝트만 대상입니다.)";
@@ -461,14 +467,18 @@
                 dataType: "json"
             }).done(function (data) {
                 if (data && data.success) {
-                    alert(repoSyncSummary(data.result));
+                    // 실패 건이 섞여 있으면 경고 톤으로 띄워 눈에 띄게 한다.
+                    let showDialog = data.result.failed > 0 ? appDialog.warn : appDialog.alert;
+                    showDialog.call(appDialog, repoSyncSummary(data.result), { title: "REPO동기화" });
                     $("#projectGrid").trigger("reloadGrid");
                 } else {
-                    alert("REPO동기화에 실패했습니다.\n" + ((data && data.message) || ""));
+                    appDialog.warn("REPO동기화에 실패했습니다.\n" + ((data && data.message) || ""),
+                                   { title: "REPO동기화" });
                 }
             })
             .fail(function (xhr, status, error) {
-                alert("REPO동기화 중 오류가 발생했습니다.\n" + status + " : " + error);
+                appDialog.warn("REPO동기화 중 오류가 발생했습니다.\n" + status + " : " + error,
+                               { title: "REPO동기화" });
             })
             .always(function () {
                 $btn.prop("disabled", false);

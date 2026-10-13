@@ -210,6 +210,16 @@ body {
     color: hsl(var(--accent-foreground));
 }
 
+/* gray — 채움 회색 버튼 (예: 프로젝트 목록의 REPO동기화). --secondary 는 거의 흰색이라 별도로 둔다. */
+.btn--gray,
+.search-form__btn--gray {
+    color: hsl(var(--primary-foreground));
+    background: hsl(var(--muted-foreground));
+    border-color: transparent;
+}
+.btn--gray:hover,
+.search-form__btn--gray:hover { background: hsl(var(--muted-foreground) / 0.85); }
+
 /* ghost */
 .btn--ghost {
     color: hsl(var(--foreground));
@@ -1027,6 +1037,8 @@ body {
 /* ── 알림/확인 대화상자 (.layer-popup--message) ──────────── */
 /* alert()/confirm() 대체. 마크업은 views/common/dialog.jsp, 동작은 /js/dialog.js */
 .layer-popup--message .layer-popup__panel { width: 420px; }
+/* 다른 레이어 팝업(예: 프로젝트 등록 팝업) 위에서 열릴 수 있으므로 항상 그 위에 쌓는다 — DOM 순서에 기대지 않는다. */
+.layer-popup--message { z-index: 1100; }
 
 .dialog-head {
     display: flex;

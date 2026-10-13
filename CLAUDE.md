@@ -97,7 +97,7 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - 뷰는 `src/main/webapp/WEB-INF/views/`, 라우팅은 `MainController`(`/user/**`). 스타일은 `static/css/common.css` 단일 파일(화면별 인라인 스타일 금지).
 - 좌측 메뉴는 **`views/common/sidebar.jsp` 한 곳**에만 있다. 각 화면은 include 앞에 `String activeMenu` 를 선언하고 `<%@ include %>`(정적 include)로 끼운다. 런타임 `<jsp:include>` 는 `DispatcherType.INCLUDE` 를 일으키는데 `SecurityConfig` 는 FORWARD/ERROR 만 열어 두었으므로 쓰지 않는다. 조각 파일에는 **`<%@ page pageEncoding="UTF-8" %>` 가 반드시 있어야 한다** — 없으면 포함되는 파일이 ISO-8859-1 로 읽혀 메뉴 한글이 깨진다.
 - 알림·확인은 브라우저 기본 `alert()`/`confirm()` 대신 **`appDialog`**(마크업 `views/common/dialog.jsp`, 동작 `static/js/dialog.js`)를 쓴다. 화면은 조각을 정적 include 하고 `dialog.js` 를 `workflow.js` 보다 먼저 읽는다. **기본 대화상자와 달리 스크립트를 멈추지 않으므로** 확인 결과는 `onConfirm`/`onCancel` 콜백으로 이어받아야 한다 — `if (confirm(...))` 식으로 옮겨 적으면 항상 진행돼 버린다. 조각이 없는 화면에서 호출하면 기본 대화상자로 폴백한다.
-  현재 적용 범위는 워크플로우 화면 4개다. `projects.jsp`/`rag.jsp` 등은 아직 `alert()` 를 쓴다.
+  현재 적용 범위는 워크플로우 화면 4개와 `projects.jsp`(전체)다. `rag.jsp`·`embedding.jsp` 등은 아직 `alert()` 를 쓴다. 대화상자(`.layer-popup--message`, z-index 1100)는 다른 레이어 팝업(1000) 위에 뜨므로 등록 팝업 안의 입력 검증에도 쓸 수 있다.
 - CSRF: 각 JSP `<head>` 의 `<meta name="_csrf">` / `_csrf_header` 를 `static/js/csrf.js` 가 읽어 jQuery ajax 에 자동 부착하고 fetch 용으로 `window.csrfHeader()` 를 노출한다. 401/403 이면 페이지를 새로고침해 Keycloak 로그인 흐름으로 되돌린다.
 - JSP EL 은 자동 이스케이프가 없다 — 사용자 유래 문자열은 `HtmlUtils.htmlEscape` 로 직접 이스케이프한다.
 - JSP 내 JS 변수 선언은 `var` 가 아니라 **`let`** 을 쓴다(커밋 90b316b 로 통일).

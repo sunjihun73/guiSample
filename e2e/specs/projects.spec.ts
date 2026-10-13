@@ -14,7 +14,8 @@
  *   #popupReqId / #popupRepoUrl / #popupFileNames  요청 ID / 저장소 URL / 파일명 입력
  *   td[aria-describedby="projectGrid_reqId"]  요청 ID 셀 (담당자 컬럼 바로 뒤)
  *   .btn-detail                    행의 "상세" 버튼 (수정 팝업 오픈)
- *   #btnRepoSync                   REPO동기화 버튼 (결과는 alert 요약)
+ *   #btnRepoSync                   REPO동기화 버튼
+ *   #appDialog.is-open             알림 레이어 팝업 (#appDialogTitle / #appDialogMessage / #appDialogConfirm)
  *   #popupProjectDescription_ifr   프로젝트 설명 - TinyMCE iframe (textarea를 대체)
  *   #btnPopupSave / #btnPopupCancel / #btnPopupClose  저장 / 취소 / 닫기
  */
@@ -53,8 +54,8 @@ const descBody = (p: Page) =>
 const marker = () => `e2e-${Date.now()}`;
 
 /**
- * alert 수집기. 저장/조회 실패 시 화면이 alert 로만 알리므로,
- * 실패를 타임아웃이 아니라 메시지로 드러나게 한다.
+ * 기본 대화상자(alert/confirm) 수집기. 화면의 알림은 모두 레이어 팝업(#appDialog)이므로
+ * 여기에 무엇이든 잡히면 기본 alert() 로 되돌아간 회귀다 — 각 테스트가 빈 배열을 기대한다.
  * (핸들러를 붙이면 Playwright 의 자동 dismiss 가 꺼지므로 직접 닫는다.)
  */
 function captureAlerts(page: Page): string[] {
@@ -266,8 +267,46 @@ test.describe('프로젝트 목록 화면', () => {
       items: expect.any(Array),
     }));
 
-    await expect.poll(() => alerts.length).toBe(1);
-    expect(alerts[0]).toMatch(/REPO동기화 완료|동기화 대상 프로젝트가 없습니다/);
+    // 결과는 기본 alert() 가 아니라 공통 레이어 팝업(appDialog)으로 보여 준다.
+    const dialog = page.locator('#appDialog');
+    await expect(dialog).toHaveClass(/is-open/);
+    await expect(page.locator('#appDialogTitle')).toHaveText('REPO동기화');
+    await expect(page.locator('#appDialogMessage')).toHaveText(/REPO동기화 완료|동기화 대상 프로젝트가 없습니다/);
+    // 실패 건이 있으면 경고 톤, 없으면 안내 톤
+    await expect(dialog).toHaveClass(body.result.failed > 0 ? /is-warn/ : /is-info/);
+
+    await page.locator('#appDialogConfirm').click();
+    await expect(dialog).not.toHaveClass(/is-open/);
     await expect(page.locator('#btnRepoSync')).toBeEnabled();
+
+    // 기본 대화상자는 한 번도 뜨지 않아야 한다.
+    expect(alerts).toEqual([]);
+  });
+
+  test('프로젝트명 없이 저장하면 등록 팝업 위에 경고 레이어 팝업이 뜨고, 닫으면 프로젝트명으로 포커스가 간다', async ({ page }) => {
+    await openCreatePopup(page);
+    await nameInput(page).fill('');
+
+    // 검증에서 막혀야 하므로 저장 요청이 나가면 안 된다.
+    let posted = false;
+    page.on('request', (req) => {
+      if (req.url().includes(PROJECT_API) && req.method() === 'POST') posted = true;
+    });
+    await saveBtn(page).click();
+
+    const dialog = page.locator('#appDialog');
+    await expect(dialog).toHaveClass(/is-open/);
+    await expect(dialog).toHaveClass(/is-warn/);
+    await expect(page.locator('#appDialogMessage')).toHaveText('프로젝트명을 입력하세요.');
+
+    // 경고 팝업이 등록 팝업보다 위에 있어 확인 버튼을 실제로 누를 수 있어야 한다.
+    await page.locator('#appDialogConfirm').click();
+    await expect(dialog).not.toHaveClass(/is-open/);
+
+    // 등록 팝업은 그대로 열려 있고, 프로젝트명 입력칸으로 포커스가 돌아온다.
+    await expect(popup(page)).toHaveClass(/is-open/);
+    await expect(nameInput(page)).toBeFocused();
+    expect(posted).toBe(false);
+    expect(alerts).toEqual([]);
   });
 });
