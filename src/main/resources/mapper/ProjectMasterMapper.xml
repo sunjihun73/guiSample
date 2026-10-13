@@ -147,6 +147,18 @@
     </update>
 
     <!--
+        삭제 — project_id 기준. 소유자 조건은 필수라 if 로 감싸지 않는다
+        (빠지면 project_id 를 아는 누구나 남의 프로젝트를 지울 수 있다).
+        project_master 를 참조하는 FK 가 없으므로 연쇄 삭제할 대상은 없다.
+    -->
+    <delete id="deleteProjectMaster">
+        DELETE FROM project_master
+        WHERE
+            project_id     = #{projectId}
+            AND create_user_id = #{createUserId}
+    </delete>
+
+    <!--
         REPO동기화 — 저장소 커밋에서 추출한 파일 목록으로 file_names 만 교체한다.
         동기화는 소유자와 무관하게 전체 프로젝트를 대상으로 하므로 소유자(create_user_id) 조건을 걸지 않는다.
         update_user_id 는 검증이 아니라 동기화를 실행한 사용자 기록이다.

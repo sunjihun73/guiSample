@@ -156,6 +156,9 @@
         </div>
         <div class="layer-popup__footer">
             <button type="button" id="btnPopupCancel" class="search-form__btn search-form__btn--ghost">취소</button>
+            <%-- 삭제는 수정 모드에서만 보인다(openEditPopup 이 표시, openCreatePopup 이 숨김). --%>
+            <button type="button" id="btnPopupDelete" class="search-form__btn search-form__btn--destructive"
+                    style="display:none;">삭제</button>
             <button type="button" id="btnPopupSave"   class="search-form__btn">저장</button>
         </div>
     </div>
@@ -324,6 +327,7 @@
             $("#projectPopupTitle").text("프로젝트 등록");
             $("#projectPopupDesc").text("프로젝트 정보를 입력한 뒤 저장하세요.");
             $("#popupProjectIdField").hide();
+            $("#btnPopupDelete").hide();     // 아직 없는 프로젝트이므로 삭제 불가
             $("#popupProjectId").val("");
             $("#popupProjectName").val("");
             $("#popupReqId").val("");
@@ -345,6 +349,7 @@
             // projectId 항목은 화면에 노출하지 않고(숨김 유지), 값만 채워 수정 시 PATCH URL 식별자로 사용한다.
             $("#popupProjectIdField").hide();
             $("#popupProjectId").val(project.projectId);
+            $("#btnPopupDelete").show();
             $("#popupProjectName").val(project.projectName);
             $("#popupProjectOwnerName").val(project.projectOwnerName);
             $("#popupReqId").val(project.reqId || "");
@@ -407,6 +412,44 @@
             })
             .always(function () {
                 $("#btnPopupSave").prop("disabled", false);
+            });
+        }
+
+        /* ── 프로젝트 삭제 (수정 팝업 전용) ──
+           확인 팝업에서 "예" → DELETE 후 수정 팝업을 닫고 목록 재조회.
+           "아니오"(또는 닫기·ESC·바깥 클릭) → 확인 팝업만 닫히고 수정 팝업은 그대로 남는다. */
+        function confirmDeleteProject() {
+            appDialog.confirm("이 프로젝트를 삭제하시겠습니까?\n삭제한 프로젝트는 되돌릴 수 없습니다.", {
+                title:       "프로젝트 삭제",
+                tone:        "warn",
+                confirmText: "예",
+                cancelText:  "아니오",
+                onConfirm:   deleteProject
+            });
+        }
+
+        function deleteProject() {
+            let projectId = $("#popupProjectId").val();
+            let $btn      = $("#btnPopupDelete");
+            $btn.prop("disabled", true);
+
+            $.ajax({
+                url:      saveUrl + "/" + encodeURIComponent(projectId),
+                type:     "DELETE",
+                dataType: "json"
+            }).done(function (data) {
+                if (data && data.success) {
+                    closePopup();
+                    $("#projectGrid").trigger("reloadGrid");
+                } else {
+                    appDialog.warn("삭제에 실패했습니다.\n" + ((data && data.message) || ""));
+                }
+            })
+            .fail(function (xhr, status, error) {
+                appDialog.warn("삭제 중 오류가 발생했습니다.\n" + status + " : " + error);
+            })
+            .always(function () {
+                $btn.prop("disabled", false);
             });
         }
 
@@ -491,6 +534,7 @@
         $("#btnPopupClose").on("click", closePopup);
         $("#projectPopupDim").on("click", closePopup);
         $("#btnPopupSave").on("click", saveProject);
+        $("#btnPopupDelete").on("click", confirmDeleteProject);
     });
 </script>
 

@@ -33,6 +33,15 @@ public interface ProjectMasterMapper
                             @Param("createUserId") String createUserId);
 
     /**
+     * 프로젝트 삭제 (project_id 기준). 소유자(create_user_id)가 일치할 때만 지운다 —
+     * 소유자 값은 updateProjectMaster 와 같은 이유로 세션에서 온 별도 파라미터다.
+     *
+     * @return 삭제된 행 수 (0 = 대상 없음 또는 소유자 불일치)
+     */
+    int deleteProjectMaster(@Param("projectId") String projectId,
+                            @Param("createUserId") String createUserId);
+
+    /**
      * REPO동기화 결과 반영 — file_names 만 갱신한다.
      * 동기화는 전체 프로젝트 대상이라 소유자 조건이 없다.
      *

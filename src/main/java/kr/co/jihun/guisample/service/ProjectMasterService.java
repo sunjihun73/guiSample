@@ -81,4 +81,15 @@ public class ProjectMasterService
         /* 소유자 조건은 DTO 가 아니라 세션에서 온 userName 으로 별도 전달한다. */
         return projectMasterMapper.updateProjectMaster(projectMaster, userName);
     }
+
+    /**
+     * 프로젝트 삭제. 소유자(create_user_id)가 일치할 때만 지운다.
+     *
+     * @param userName 로그인 사용자명 — 소유자 조건
+     * @return 삭제된 행 수 (0 = 대상 없음 또는 남의 프로젝트)
+     */
+    public int deleteProjectMaster(String projectId, String userName)
+    {
+        return projectMasterMapper.deleteProjectMaster(projectId, userName);
+    }
 }

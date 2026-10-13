@@ -6,6 +6,7 @@ import kr.co.jihun.guisample.service.RepoSyncService;
 import kr.co.jihun.guisample.dto.ProjectMasterDTO;
 import kr.co.jihun.guisample.session.LoginUserSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -134,6 +135,29 @@ public class ProjectMasterRestController
             if (updated == 0)
             {
                 result.put("message", "수정 대상 프로젝트를 찾을 수 없습니다.");
+            }
+        }
+        catch (Exception e)
+        {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /** 프로젝트 삭제 — 남의 프로젝트이거나 이미 없으면 success=false. */
+    @DeleteMapping("/projects/{projectId}")
+    public Map<String, Object> deleteProject(@PathVariable String projectId)
+    {
+        Map<String, Object> result = new HashMap<>();
+        try
+        {
+            int deleted = projectMasterService.deleteProjectMaster(projectId, loginUserSession.requireUserName());
+            result.put("success",   deleted > 0);
+            result.put("projectId", projectId);
+            if (deleted == 0)
+            {
+                result.put("message", "삭제 대상 프로젝트를 찾을 수 없습니다.");
             }
         }
         catch (Exception e)

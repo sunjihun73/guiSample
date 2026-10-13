@@ -8,7 +8,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
 | 기능 | 내용 |
 |---|---|
 | **로그인 (SSO)** | Keycloak OIDC 로그인. 첫 인증 요청에서 `user_master` 에 사용자를 자동 등록하고, 이후 모든 조회는 로그인 사용자 기준으로 걸러집니다. |
-| **프로젝트 관리** | 프로젝트 목록 조회(검색·페이징), 등록·수정 팝업. 요청 ID(`req_id`)·저장소 URL(`repo_url`)·파일명(`file_names`) 입력, TinyMCE 설명 에디터 |
+| **프로젝트 관리** | 프로젝트 목록 조회(검색·페이징), 등록·수정·삭제 팝업. 요청 ID(`req_id`)·저장소 URL(`repo_url`)·파일명(`file_names`) 입력, TinyMCE 설명 에디터 |
 | **REPO동기화** | 프로젝트의 GitHub 저장소에서 최근 30일 커밋을 읽어, 커밋 메시지의 `{요청ID}` 가 `req_id` 와 일치하는 커밋의 변경 파일로 `file_names` 를 채웁니다. 저장소 종류는 확장 가능하게 추상화되어 있습니다(SVN 등). |
 | **지식베이스 색인** | 카테고리 등록 → 텍스트 파일 업로드 → 800토큰 청킹 → 임베딩 → pgvector 적재. 업로드한 파일·청크 목록 조회 |
 | **RAG 챗봇** | dense(pgvector) + BM25 키워드 검색을 RRF 로 융합한 하이브리드 검색, 카테고리 한정 검색, SSE 토큰 스트리밍, 대화 세션·메시지(토큰 사용량 포함) 저장 |
@@ -147,6 +147,7 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 | GET | `/projects/{projectId}` | — | `{ success, project }` |
 | POST | `/projects` | `{ projectName, projectDescription, reqId, repoUrl, fileNames }` | `{ success, projectId }` |
 | PATCH | `/projects/{projectId}` | 위와 같음 | `{ success, projectId, message? }` |
+| DELETE | `/projects/{projectId}` | — | `{ success, projectId, message? }` — 소유자 프로젝트만 삭제 |
 | POST | `/projects/repo-sync` | — | `{ success, result: { lookbackDays, total, updated, unchanged, noMatch, failed, items[] } }` |
 
 담당자(`projectOwnerName`)는 등록 시 로그인 사용자로 고정되며 수정할 수 없습니다.

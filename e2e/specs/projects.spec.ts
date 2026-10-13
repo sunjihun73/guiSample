@@ -18,6 +18,7 @@
  *   #appDialog.is-open             알림 레이어 팝업 (#appDialogTitle / #appDialogMessage / #appDialogConfirm)
  *   #popupProjectDescription_ifr   프로젝트 설명 - TinyMCE iframe (textarea를 대체)
  *   #btnPopupSave / #btnPopupCancel / #btnPopupClose  저장 / 취소 / 닫기
+ *   #btnPopupDelete                삭제 (수정 모드에서만 표시, 저장 버튼 바로 왼쪽, 빨간색)
  */
 import { test, expect, Page } from '@playwright/test';
 
@@ -307,6 +308,106 @@ test.describe('프로젝트 목록 화면', () => {
     await expect(popup(page)).toHaveClass(/is-open/);
     await expect(nameInput(page)).toBeFocused();
     expect(posted).toBe(false);
+    expect(alerts).toEqual([]);
+  });
+
+  /** UI 로 프로젝트를 하나 만들고, 이름으로 조회해 그 행을 돌려준다. */
+  async function createAndFind(page: Page, projectName: string) {
+    await openCreatePopup(page);
+    await nameInput(page).fill(projectName);
+    const created = page.waitForResponse(
+      (res) => res.url().includes(PROJECT_API) && res.request().method() === 'POST'
+    );
+    await saveBtn(page).click();
+    expect(await (await created).json()).toMatchObject({ success: true });
+    await expect(popup(page)).not.toHaveClass(/is-open/);
+    await search(page, projectName);
+    const row = gridRows(page).filter({ hasText: projectName });
+    await expect(row).toHaveCount(1);
+    return row;
+  }
+
+  test('삭제 버튼은 수정 팝업에서만 저장 버튼 바로 왼쪽에 빨간색으로 보인다', async ({ page }) => {
+    const deleteBtn = page.locator('#btnPopupDelete');
+
+    // 등록 모드에서는 숨김
+    await openCreatePopup(page);
+    await expect(deleteBtn).toBeHidden();
+    await page.locator('#btnPopupCancel').click();
+
+    const row = await createAndFind(page, `e2e Test 프로젝트 ${marker()}`);
+    await row.locator('.btn-detail').click();
+    await expect(page.locator('#projectPopupTitle')).toHaveText('프로젝트 수정');
+    await expect(deleteBtn).toBeVisible();
+    await expect(deleteBtn).toHaveText('삭제');
+
+    // 저장 버튼 바로 왼쪽 — DOM 상 바로 앞 형제이고 화면에서도 왼쪽에 있다.
+    expect(await saveBtn(page).evaluate((el) => el.previousElementSibling?.id)).toBe('btnPopupDelete');
+    const del = (await deleteBtn.boundingBox())!;
+    const save = (await saveBtn(page).boundingBox())!;
+    expect(del.x + del.width).toBeLessThanOrEqual(save.x);
+
+    // 빨간색 (--destructive: hsl(0 72.2% 50.6%) ≈ rgb(220, 38, 38))
+    const [r, g, b] = (await deleteBtn.evaluate((el) => getComputedStyle(el).backgroundColor))
+      .match(/\d+/g)!.map(Number);
+    expect(r).toBeGreaterThan(180);
+    expect(g).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+
+    expect(alerts).toEqual([]);
+  });
+
+  test('삭제 확인에서 아니오면 수정 팝업이 유지되고, 예면 삭제 후 팝업이 닫히고 목록이 재조회된다', async ({ page }) => {
+    const projectName = `e2e Test 프로젝트 ${marker()}`;
+    const row = await createAndFind(page, projectName);
+    const projectId = await row.getAttribute('id');
+
+    await row.locator('.btn-detail').click();
+    await expect(popup(page)).toHaveClass(/is-open/);
+
+    const dialog = page.locator('#appDialog');
+    const yesBtn = page.locator('#appDialogConfirm');
+    const noBtn = page.locator('#appDialogCancel');
+
+    // ── 아니오: 확인 팝업만 닫히고 수정 팝업·데이터는 그대로
+    let deleteSent = false;
+    page.on('request', (req) => {
+      if (req.method() === 'DELETE') deleteSent = true;
+    });
+    await page.locator('#btnPopupDelete').click();
+    await expect(dialog).toHaveClass(/is-open/);
+    await expect(page.locator('#appDialogTitle')).toHaveText('프로젝트 삭제');
+    await expect(yesBtn).toHaveText('예');
+    await expect(noBtn).toHaveText('아니오');
+
+    await noBtn.click();
+    await expect(dialog).not.toHaveClass(/is-open/);
+    await expect(popup(page)).toHaveClass(/is-open/);
+    await expect(page.locator('#projectPopupTitle')).toHaveText('프로젝트 수정');
+    expect(deleteSent).toBe(false);
+
+    // ── 예: DELETE → 수정 팝업 닫힘 → 목록 재조회(해당 행 사라짐)
+    await page.locator('#btnPopupDelete').click();
+    await expect(dialog).toHaveClass(/is-open/);
+
+    const deleted = page.waitForResponse(
+      (res) => res.url().includes(`${PROJECT_API}/`) && res.request().method() === 'DELETE'
+    );
+    const reloaded = page.waitForResponse(
+      (res) => res.url().includes(PROJECT_API) && res.request().method() === 'GET'
+    );
+    await yesBtn.click();
+
+    expect(await (await deleted).json()).toMatchObject({ success: true, projectId });
+    await reloaded;
+    await expect(dialog).not.toHaveClass(/is-open/);
+    await expect(popup(page)).not.toHaveClass(/is-open/);
+    await expect(gridRows(page).filter({ hasText: projectName })).toHaveCount(0);
+
+    // DB 에서도 지워졌는지 단건 API 로 확인
+    const detail = await page.request.get(`${PROJECT_API}/${encodeURIComponent(projectId ?? '')}`);
+    expect(await detail.json()).toMatchObject({ success: false });
+
     expect(alerts).toEqual([]);
   });
 });
