@@ -13,7 +13,7 @@ SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun   # e2e 프로파일로 기동
 
 `./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
 
-Java 툴체인은 **21** (`build.gradle`). README.md 의 "Java 17" 표기는 오래된 값이다.
+Java 툴체인은 **21** (`build.gradle`).
 
 ### E2E (Playwright)
 
@@ -86,6 +86,7 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 
 ### REPO동기화 — 저장소 커밋 → `project_master.file_names`
 
+- 설계 근거는 **ADR 0007**.
 - 프로젝트 목록의 **REPO동기화** 버튼 → `POST /user/project/projects/repo-sync` → `RepoSyncService`. `repo_url`·`req_id` 가 모두 있는 **전체 프로젝트**가 대상이며(**데이터 소유권 규칙의 의도된 예외** — 대상 선정·UPDATE 모두 소유자/사용자 이름 조건 없음, `update_user_id` 에 실행자만 기록), 최근 `scm.sync.lookback-days`(30)일 커밋 메시지의 `{…}` 값이 `req_id` 와 **정확히 일치**하는 커밋들의 변경 파일 합집합(정렬·줄바꿈 구분)으로 `file_names` 를 **교체**한다. 일치 커밋이 없으면 기존 값을 그대로 둔다.
 - 저장소 종류는 `scm` 패키지의 **`ScmClient` 인터페이스 뒤에 숨긴다**. `ScmClientResolver` 가 `supports(repoUrl)` 로 구현을 고르므로, GitLab·SVN 등은 **구현체 빈을 하나 추가**하면 되고 `RepoSyncService` 는 손대지 않는다. 현재 구현은 `scm/github/GitHubScmClient` 하나(설정 `scm.github.*`, 두 프로파일 yaml 모두).
 - GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 2개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
@@ -111,10 +112,10 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 
 ## 문서
 
-- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성). **인증/RAG/워크플로우 흐름을 바꾸기 전에 읽을 것.**
+- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화 흐름을 바꾸기 전에 읽을 것.**
 - `src/docs/measurements.md` — 검색 품질·비용 실측 이력. **임베딩 모델이나 검색 임계값을 바꾸기 전에 읽고, 바꾼 뒤에는 같은 형식으로 추가할 것.**
 - `_workspace/00_architect_design.md` — 채팅 세션 기능(chat_master/chat_detail) 상세 설계. 나머지 `_workspace/*` 는 하위 에이전트 작업 요약, `_workspace_prev_*` 는 이전 회차 보관본.
-- `README.md` — 기능·API 개요. 단, 자바 버전과 `vo` 패키지(현재는 `dto`) 표기는 낡았다.
+- `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준으로 갱신). 기능·API 를 바꾸면 함께 고칠 것.
 - `DESIGN.md` — 앱 아키텍처가 아니라 UI 디자인 토큰(Apple 스타일) 스펙이다.
 
 ## 하네스: Spring AI/RAG 기능 개발
