@@ -10,6 +10,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
 | **로그인 (SSO)** | Keycloak OIDC 로그인. 첫 인증 요청에서 `user_master` 에 사용자를 자동 등록하고, 이후 모든 조회는 로그인 사용자 기준으로 걸러집니다. |
 | **프로젝트 관리** | 프로젝트 목록 조회(검색·페이징), 등록·수정·삭제 팝업. 요청 ID(`req_id`)·저장소 URL(`repo_url`)·파일명(`file_names`) 입력, TinyMCE 설명 에디터 |
 | **REPO동기화** | 프로젝트의 GitHub 저장소에서 최근 30일 커밋을 읽어, 커밋 메시지의 `{요청ID}` 가 `req_id` 와 일치하는 커밋의 변경 파일로 `file_names` 를 채웁니다. 저장소 종류는 확장 가능하게 추상화되어 있습니다(SVN 등). |
+| **REPO PUSH** | 프로젝트 수정 팝업의 **REPO PUSH** 버튼으로 저장된 프로젝트 설명(HTML)을 저장소의 `src/docs/{project_id}.txt` 로 커밋합니다. 커밋 메시지는 `프로젝트 설명 yyyy-MM-dd`. |
 | **지식베이스 색인** | 카테고리 등록 → 텍스트 파일 업로드 → 800토큰 청킹 → 임베딩 → pgvector 적재. 업로드한 파일·청크 목록 조회 |
 | **RAG 챗봇** | dense(pgvector) + BM25 키워드 검색을 RRF 로 융합한 하이브리드 검색, 카테고리 한정 검색, SSE 토큰 스트리밍, 대화 세션·메시지(토큰 사용량 포함) 저장 |
 | **가드레일** | 모든 LLM 호출은 LiteLLM 프록시를 거치며, 가드레일에 차단되면 오류 대신 "안전 정책에 따라 답변할 수 없습니다" 안내 문구로 응답합니다. |
@@ -42,7 +43,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
                                                   ├─► flowable-db   (localhost:5433)  워크플로우 엔진 DB
                                                   ├─► Keycloak      (keycloak.jihun.com)  SSO
                                                   ├─► LiteLLM       (litellm.jihun.com)   OpenAI 프록시 · 가드레일
-                                                  └─► GitHub API    (api.github.com)      REPO동기화
+                                                  └─► GitHub API    (api.github.com)      REPO동기화·REPO PUSH
 ```
 
 `/etc/hosts` 에 도메인을 등록합니다.
@@ -85,7 +86,7 @@ UPLOAD_FILE_PATH=          # 지식파일 업로드 저장 경로
 FLOWABLE_DB_PASSWORD=      # 워크플로우 전용 DB 비밀번호
 PGVECTOR_USERNAME=         # 앱 DB 계정
 PGVECTOR_PASSWORD=
-GITHUB_TOKEN=              # (선택) 없으면 공개 저장소만 · 시간당 60회
+GITHUB_TOKEN=              # REPO동기화는 선택(없으면 공개 저장소만·시간당 60회), REPO PUSH는 필수(contents:write)
 ```
 
 ## 빌드 & 실행
@@ -106,7 +107,7 @@ SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun     # e2e 프로파일로 실행
 
 | 종류 | 위치 | 실행 | 범위 |
 |---|---|---|---|
-| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, GitHub URL 파싱 (스프링 컨텍스트·DB·네트워크 없음) |
+| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, REPO PUSH 경로·커밋 메시지·거부 조건, GitHub URL 파싱 (스프링 컨텍스트·DB·네트워크 없음) |
 | E2E | `e2e/` (별도 npm 프로젝트) | `cd e2e && npm test` | 로그인, 프로젝트, 채팅, 하이브리드 검색, 워크플로우 |
 
 E2E 는 앱과 외부 구성요소가 모두 떠 있어야 합니다. 누락 시 `setup/preflight.ts` 가 무엇을 띄워야 하는지 알려 주고 중단합니다. 최초 설정과 자주 막히는 지점은 [`e2e/README.md`](e2e/README.md) 를 참고하세요.
@@ -129,7 +130,7 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 |---|---|---|
 | `/` | home.jsp | 랜딩 (로그인 진입) |
 | `/user/dashboard` | dashboard.jsp | 대시보드 |
-| `/user/projects` | projects.jsp | 프로젝트 목록·등록·수정, REPO동기화 |
+| `/user/projects` | projects.jsp | 프로젝트 목록·등록·수정, REPO동기화, REPO PUSH |
 | `/user/rag` | rag.jsp | RAG 챗봇 (세션 목록·카테고리 선택·스트리밍 답변) |
 | `/user/embedding` | embedding.jsp | 카테고리 관리, 지식파일 업로드·목록, 청크 조회 |
 | `/user/workflow/step1` ~ `step3` | workflow/step1~3.jsp | 단계별 태스크 목록·생성·완료 |
@@ -148,6 +149,7 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 | POST | `/projects` | `{ projectName, projectDescription, reqId, repoUrl, fileNames }` | `{ success, projectId }` |
 | PATCH | `/projects/{projectId}` | 위와 같음 | `{ success, projectId, message? }` |
 | DELETE | `/projects/{projectId}` | — | `{ success, projectId, message? }` — 소유자 프로젝트만 삭제 |
+| POST | `/projects/{projectId}/repo-push` | — | `{ success, result: { projectId, repoUrl, path, commitMessage, commitId, created }, message? }` — 소유자 프로젝트만 |
 | POST | `/projects/repo-sync` | — | `{ success, result: { lookbackDays, total, updated, unchanged, noMatch, failed, items[] } }` |
 
 담당자(`projectOwnerName`)는 등록 시 로그인 사용자로 고정되며 수정할 수 없습니다.
@@ -226,6 +228,14 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 - 소유권 규칙의 예외로 **전체 프로젝트**를 대상으로 합니다.
 - 설정은 `scm.sync.lookback-days`(30), `scm.github.*`(API URL, 호스트, 토큰, 최대 페이지).
 
+### REPO PUSH
+
+- 같은 `ScmClient` 추상화를 씁니다 — 쓰기는 `putFile`(기본 구현은 "지원하지 않음" 예외), GitHub 구현은 Contents API(GET 으로 blob sha 확인 → PUT)로 기본 브랜치에 커밋합니다.
+- 대상 경로는 `src/docs/{project_id}.txt`, 내용은 **DB 의 `project_master.project_description`**(TinyMCE HTML), 커밋 메시지는 `프로젝트 설명 yyyy-MM-dd` 입니다.
+- 화면에서 저장하지 않은 설명 변경은 올라가지 않습니다(서버가 DB 값을 읽습니다). 팝업이 먼저 그 사실을 확인받습니다.
+- REPO동기화와 달리 **소유권 규칙을 그대로 따릅니다**(팝업에서 한 건씩 실행). 설명·저장소 URL 이 비어 있으면 거부합니다 — 빈 파일로 기존 문서를 덮지 않기 위함입니다.
+- `GITHUB_TOKEN` 에 **contents:write** 권한이 필요합니다(읽기 전용 토큰이면 403).
+
 ### 데이터 계층
 
 - `DataSourceConfig` 가 `HikariDataSource` 를 직접 선언하므로 Boot 의 DataSource/MyBatis 자동구성이 꺼집니다. `SqlSessionFactory` 를 직접 구성합니다(언더스코어→카멜케이스, `dto` 타입 별칭, `classpath:mapper/**/*.xml`). Spring AI pgvector 와 MyBatis 가 이 DataSource 하나를 공유합니다.
@@ -244,7 +254,7 @@ src/main/java/kr/co/jihun/guisample/
 ├── dto/                               # 요청·응답·도메인 DTO
 ├── filter/                            # KeycloakUserProvisioningFilter
 ├── mapper/                            # MyBatis 매퍼 인터페이스
-├── scm/                               # ScmClient 추상화 (REPO동기화)
+├── scm/                               # ScmClient 추상화 (REPO동기화·REPO PUSH)
 │   └── github/                        # GitHub 구현 + 설정
 ├── service/                           # 비즈니스 로직 (AI·임베딩·하이브리드 검색·채팅·워크플로우·REPO동기화 등)
 └── session/                           # LoginUserSession
@@ -282,7 +292,7 @@ e2e/                                   # Playwright E2E (별도 npm 프로젝트
 | [`src/docs/adr/0004`](src/docs/adr/0004-sguard-cancel.md) | sguard 포기 근거 |
 | [`src/docs/adr/0005`](src/docs/adr/0005-hybrid-bm25-rrf.md) | 하이브리드 검색(BM25+RRF) · RAG 소유권 |
 | [`src/docs/adr/0006`](src/docs/adr/0006-flowable-workflow.md) | 워크플로우(Flowable · 전용 DB · 화면 구성) |
-| [`src/docs/adr/0007`](src/docs/adr/0007-github-repo-sync.md) | REPO동기화(ScmClient 추상화 · GitHub 구현) |
+| [`src/docs/adr/0007`](src/docs/adr/0007-github-repo-sync.md) | REPO동기화·REPO PUSH(ScmClient 추상화 · GitHub 구현) |
 | [`src/docs/measurements.md`](src/docs/measurements.md) | 검색 품질 · 비용 실측 이력 |
 | [`e2e/README.md`](e2e/README.md) | E2E 환경 구성 · 문제 해결 |
 | [`DESIGN.md`](DESIGN.md) | UI 디자인 토큰 |

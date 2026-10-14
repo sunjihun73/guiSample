@@ -18,7 +18,8 @@
  *   #appDialog.is-open             알림 레이어 팝업 (#appDialogTitle / #appDialogMessage / #appDialogConfirm)
  *   #popupProjectDescription_ifr   프로젝트 설명 - TinyMCE iframe (textarea를 대체)
  *   #btnPopupSave / #btnPopupCancel / #btnPopupClose  저장 / 취소 / 닫기
- *   #btnPopupDelete                삭제 (수정 모드에서만 표시, 저장 버튼 바로 왼쪽, 빨간색)
+ *   #btnPopupDelete                삭제 (수정 모드에서만 표시, REPO PUSH 왼쪽, 빨간색)
+ *   #btnPopupRepoPush              REPO PUSH (수정 모드에서만 표시, 저장 버튼 바로 왼쪽)
  */
 import { test, expect, Page } from '@playwright/test';
 
@@ -327,7 +328,7 @@ test.describe('프로젝트 목록 화면', () => {
     return row;
   }
 
-  test('삭제 버튼은 수정 팝업에서만 저장 버튼 바로 왼쪽에 빨간색으로 보인다', async ({ page }) => {
+  test('삭제 버튼은 수정 팝업에서만 REPO PUSH 왼쪽에 빨간색으로 보인다', async ({ page }) => {
     const deleteBtn = page.locator('#btnPopupDelete');
 
     // 등록 모드에서는 숨김
@@ -341,8 +342,10 @@ test.describe('프로젝트 목록 화면', () => {
     await expect(deleteBtn).toBeVisible();
     await expect(deleteBtn).toHaveText('삭제');
 
-    // 저장 버튼 바로 왼쪽 — DOM 상 바로 앞 형제이고 화면에서도 왼쪽에 있다.
-    expect(await saveBtn(page).evaluate((el) => el.previousElementSibling?.id)).toBe('btnPopupDelete');
+    // REPO PUSH 바로 왼쪽 — DOM 상 바로 앞 형제이고 화면에서도 저장 버튼보다 왼쪽에 있다.
+    expect(
+      await page.locator('#btnPopupRepoPush').evaluate((el) => el.previousElementSibling?.id)
+    ).toBe('btnPopupDelete');
     const del = (await deleteBtn.boundingBox())!;
     const save = (await saveBtn(page).boundingBox())!;
     expect(del.x + del.width).toBeLessThanOrEqual(save.x);
@@ -353,6 +356,56 @@ test.describe('프로젝트 목록 화면', () => {
     expect(r).toBeGreaterThan(180);
     expect(g).toBeLessThan(80);
     expect(b).toBeLessThan(80);
+
+    expect(alerts).toEqual([]);
+  });
+
+  test('REPO PUSH 버튼은 수정 팝업에서만 저장 버튼 바로 왼쪽에 보인다', async ({ page }) => {
+    const pushBtn = page.locator('#btnPopupRepoPush');
+
+    // 등록 모드에서는 숨김 — 저장 전에는 푸시할 DB 값이 없다
+    await openCreatePopup(page);
+    await expect(pushBtn).toBeHidden();
+    await page.locator('#btnPopupCancel').click();
+
+    const row = await createAndFind(page, `e2e Test 프로젝트 ${marker()}`);
+    await row.locator('.btn-detail').click();
+    await expect(page.locator('#projectPopupTitle')).toHaveText('프로젝트 수정');
+    await expect(pushBtn).toBeVisible();
+    await expect(pushBtn).toHaveText('REPO PUSH');
+
+    // 저장 버튼 바로 왼쪽 — DOM 상 바로 앞 형제이고 화면에서도 왼쪽에 있다.
+    expect(await saveBtn(page).evaluate((el) => el.previousElementSibling?.id)).toBe('btnPopupRepoPush');
+    const push = (await pushBtn.boundingBox())!;
+    const save = (await saveBtn(page).boundingBox())!;
+    expect(push.x + push.width).toBeLessThanOrEqual(save.x);
+
+    expect(alerts).toEqual([]);
+  });
+
+  /* 저장소 URL 이 없는 프로젝트로 돌린다 — 외부 GitHub 호출 없이 실패 경로를 확인할 수 있고,
+     결과가 기본 alert() 가 아니라 공통 레이어 팝업으로 나오는지도 같이 본다. */
+  test('저장소 URL 이 없으면 REPO PUSH 가 레이어 팝업으로 실패 사유를 알린다', async ({ page }) => {
+    const row = await createAndFind(page, `e2e Test 프로젝트 ${marker()}`);
+    await row.locator('.btn-detail').click();
+    await expect(popup(page)).toHaveClass(/is-open/);
+
+    const pushed = page.waitForResponse(
+      (res) => res.url().includes('/repo-push') && res.request().method() === 'POST'
+    );
+    await page.locator('#btnPopupRepoPush').click();
+    expect(await (await pushed).json()).toMatchObject({ success: false });
+
+    const dialog = page.locator('#appDialog');
+    await expect(dialog).toHaveClass(/is-open/);
+    await expect(page.locator('#appDialogTitle')).toHaveText('REPO PUSH');
+    await expect(page.locator('#appDialogMessage')).toHaveText(/저장소 URL/);
+
+    await page.locator('#appDialogConfirm').click();
+    await expect(dialog).not.toHaveClass(/is-open/);
+    // 수정 팝업은 그대로 열려 있다 (푸시는 화면을 닫지 않는다)
+    await expect(popup(page)).toHaveClass(/is-open/);
+    await expect(page.locator('#btnPopupRepoPush')).toBeEnabled();
 
     expect(alerts).toEqual([]);
   });

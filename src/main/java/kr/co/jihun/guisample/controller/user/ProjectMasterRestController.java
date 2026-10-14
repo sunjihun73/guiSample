@@ -1,7 +1,9 @@
 package kr.co.jihun.guisample.controller.user;
 
+import kr.co.jihun.guisample.dto.RepoPushResult;
 import kr.co.jihun.guisample.dto.RepoSyncResult;
 import kr.co.jihun.guisample.service.ProjectMasterService;
+import kr.co.jihun.guisample.service.RepoPushService;
 import kr.co.jihun.guisample.service.RepoSyncService;
 import kr.co.jihun.guisample.dto.ProjectMasterDTO;
 import kr.co.jihun.guisample.session.LoginUserSession;
@@ -34,6 +36,7 @@ public class ProjectMasterRestController
 {
     private final ProjectMasterService projectMasterService;
     private final RepoSyncService repoSyncService;
+    private final RepoPushService repoPushService;
     private final LoginUserSession loginUserSession;
 
     @GetMapping("/projects")
@@ -159,6 +162,33 @@ public class ProjectMasterRestController
             {
                 result.put("message", "삭제 대상 프로젝트를 찾을 수 없습니다.");
             }
+        }
+        catch (Exception e)
+        {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * REPO PUSH — 프로젝트 설명(project_description, HTML)을 repo_url 저장소의
+     * {@code src/docs/{project_id}.txt} 로 커밋한다.
+     *
+     * <p>REPO동기화와 달리 <b>소유권 규칙을 그대로 따른다</b>(팝업에서 한 건씩 실행하는 기능).
+     * 푸시할 HTML 은 요청 본문이 아니라 <b>DB 의 project_description</b> 에서 읽는다 — 화면에서
+     * 편집 중인 값이 아니라 저장된 값이 올라가므로, 수정 후에는 저장을 먼저 해야 한다.
+     */
+    @PostMapping("/projects/{projectId}/repo-push")
+    public Map<String, Object> pushRepository(@PathVariable String projectId)
+    {
+        Map<String, Object> result = new HashMap<>();
+        try
+        {
+            RepoPushResult push = repoPushService.pushProjectDescription(
+                    projectId, loginUserSession.requireUserName());
+            result.put("success", true);
+            result.put("result",  push);
         }
         catch (Exception e)
         {

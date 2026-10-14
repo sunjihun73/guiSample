@@ -1,7 +1,7 @@
-# 0007. REPO동기화 — 저장소 커밋으로 프로젝트 변경 파일 채우기 (GitHub 우선, SCM 추상화)
+# 0007. REPO동기화·REPO PUSH — 저장소와 프로젝트 데이터 주고받기 (GitHub 우선, SCM 추상화)
 
 - 상태(Status): 승인됨(Accepted)
-- 날짜(Date): 2026-10-13
+- 날짜(Date): 2026-10-13 (2026-10-14 REPO PUSH 추가)
 
 ## 배경(Context)
 
@@ -22,6 +22,8 @@
 
 동기화는 **소유자와 무관하게 전체 프로젝트**를 대상으로 한다. 이것은 [데이터 소유권 규칙](../../../CLAUDE.md)의 의도된 예외다(결정 상세 7).
 
+2026-10-14 에 같은 인터페이스에 **쓰기 한 개(`putFile`)** 를 더해 **REPO PUSH**(프로젝트 설명을 저장소 문서로 커밋)를 붙였다. 푸시는 팝업에서 한 건씩 실행하므로 소유권 규칙을 그대로 지킨다(결정 상세 8).
+
 ## 구성 요소
 
 | 역할 | 파일 |
@@ -33,13 +35,14 @@
 | GitHub 구현 | `scm/github/GitHubScmClient.java` |
 | GitHub 설정 바인딩 | `scm/github/GitHubProperties.java` (`scm.github.*`) |
 | 동기화 규칙 | `service/RepoSyncService.java` |
-| 응답 DTO | `dto/RepoSyncResult.java` |
-| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`) |
+| 푸시 규칙 | `service/RepoPushService.java` |
+| 응답 DTO | `dto/RepoSyncResult.java`, `dto/RepoPushResult.java`, `scm/ScmPushResult.java` |
+| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`, `pushRepository`) |
 | 매퍼 | `mapper/ProjectMasterMapper.java`, `resources/mapper/ProjectMasterMapper.xml` (`updateProjectFileNames`) |
-| 화면 | `views/user/projects.jsp` (`#btnRepoSync`) |
+| 화면 | `views/user/projects.jsp` (`#btnRepoSync`, 수정 팝업의 `#btnPopupRepoPush`) |
 | 설정 | `application-local.yaml`, `application-e2e.yaml` 의 `scm:` 블록 |
-| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
-| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼) |
+| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../service/RepoPushServiceTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
+| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼, REPO PUSH 버튼) |
 
 ## 전체 흐름
 
@@ -162,6 +165,39 @@ public interface ScmClient {
 
 `file_names` 는 저장소라는 공유된 사실에서 기계적으로 계산되는 값이라, 누가 실행해도 같은 결과가 나온다. 그래서 소유자 제한 없이 한 번에 전체를 맞추는 쪽을 택했다. 그 대가는 "감수하는 것"에 적었다.
 
+### 8. REPO PUSH — 같은 추상화에 쓰기 한 개만 더한다 (2026-10-14)
+
+프로젝트 설명(`project_master.project_description`, TinyMCE HTML)을 저장소에 문서로 남기는 요구가 추가됐다. 수정 팝업의 **REPO PUSH** 버튼(저장 버튼 왼쪽) → 저장소의 `src/docs/{project_id}.txt` 로 커밋, 커밋 메시지는 `프로젝트 설명 {오늘 날짜}`.
+
+읽기 전용이던 `ScmClient` 에 **쓰기 메서드 하나**를 더한다. 조회와 같은 이유로 — 저장소 종류가 늘어도 푸시 규칙(`RepoPushService`)은 그대로여야 한다.
+
+```java
+default ScmPushResult putFile(String repoUrl, String path, String content, String commitMessage) {
+    throw new ScmException("이 저장소는 파일 푸시를 지원하지 않습니다: " + repoUrl);
+}
+```
+
+- **`default` 로 둔 이유.** 조회만 지원하는 구현(읽기 전용 미러, 로그만 주는 SCM)이 쓰기를 억지로 구현하지 않아도 컴파일된다. 기본 구현이 `ScmException` 을 던지므로 호출 측은 "지원하지 않는 저장소"와 같은 경로로 처리한다. 쓰기를 별도 인터페이스(`ScmWriter`)로 쪼개는 쪽도 검토했으나, 구현체가 하나뿐인 지금은 `Resolver` 를 둘로 늘리는 비용이 더 크다.
+- **GitHub 구현은 Contents API 다.** `GET /repos/{o}/{r}/contents/{path}` 로 기존 blob 의 sha 를 확인하고(404 면 신규), `PUT` 으로 base64 내용과 `message`(+ 교체면 `sha`)를 보낸다. sha 없이 기존 파일에 PUT 하면 422 다. 브랜치를 지정하지 않으므로 **기본 브랜치**에 바로 커밋된다 — Git Trees/Refs API 로 커밋을 직접 조립하는 방식(브랜치·여러 파일 제어 가능)은 파일 한 개에는 과하다.
+- **경로는 URI 변수 하나로 넘기면 안 된다.** `.../contents/{path}` 에 `src/docs/x.txt` 를 넣으면 RestClient 의 인코딩(`TEMPLATE_AND_VALUES`)이 슬래시를 `%2F` 로 바꿔 GitHub 가 404 를 준다. 세그먼트 단위(`pathSegment`)로 넣어 구분자를 살린다(`GitHubScmClient.contentsUri`, 회귀 테스트 있음).
+- **푸시 내용은 DB 에서 읽는다.** 요청 본문으로 HTML 을 받지 않는다 — 올라간 파일과 `project_description` 이 어긋나지 않게 하기 위해서다. 그래서 **저장하지 않은 편집은 반영되지 않는다.** 화면이 에디터 내용과 열었을 때의 값을 비교해 다르면 먼저 확인받는다(`#appDialog`).
+- **소유권 규칙을 지킨다.** 결정 상세 7의 예외는 REPO동기화에만 해당한다. 푸시는 팝업에서 한 건씩 실행하는 조작이므로, 소유자 조건이 걸린 단건 조회(`selectProjectMaster(projectId, userName)`)로 대상을 집는다. 남의 프로젝트는 "찾을 수 없음"이다.
+- **빈 내용은 거부한다.** 설명이 비었거나 `repo_url` 이 없으면 호출하지 않고 사유를 돌려준다. 빈 파일을 올려 저장소의 기존 문서를 지우는 사고를 막는다.
+- 트랜잭션 없음, 앱 DB 변경 없음(푸시는 저장소 쪽만 바뀐다).
+- **내용은 멱등이지만 커밋은 아니다.** 같은 내용으로 다시 누르면 파일은 그대로지만 **변경 없는 빈 커밋이 하나 더 쌓인다**(2026-10-14 실측). Contents API 가 PUT 을 그대로 커밋으로 만들기 때문이다. 거슬리면 sha 조회 때 받은 기존 내용과 비교해 같으면 PUT 을 건너뛰면 된다(REPO동기화의 `UNCHANGED` 와 같은 처리). 지금은 넣지 않았다 — 푸시는 사람이 한 건씩 누르는 조작이라 빈 커밋이 쌓이는 속도가 느리고, 응답에 "변경 없음" 상태를 하나 더 들여야 한다.
+
+| 메서드 | 경로 | 응답 |
+|---|---|---|
+| POST | `/user/project/projects/{projectId}/repo-push` | `{ success, result: RepoPushResult }` 또는 `{ success: false, message }` |
+
+```json
+{
+  "projectId": "8f3c…", "repoUrl": "https://github.com/acme/app",
+  "path": "src/docs/8f3c….txt", "commitMessage": "프로젝트 설명 2026-10-14",
+  "commitId": "a1b2c3…", "created": true
+}
+```
+
 ## 실측 근거
 
 2026-10-13 로컬 환경(토큰 없음, 공개 저장소)에서 확인했다.
@@ -175,6 +211,16 @@ public interface ScmClient {
 | 매칭·갱신 규칙 | `./gradlew test` — 가짜 `ScmClient` 로 `RepoSyncService` 검증 | 8건 통과 |
 | URL 파싱·호스트 판정 | `GitHubScmClientTest` | 2건 통과 |
 | 화면 회귀 | `e2e/specs/projects.spec.ts` | 6건 통과 |
+
+REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로 확인했다.
+
+| 확인 항목 | 방법 | 결과 |
+|---|---|---|
+| 토큰 미설정이 푸시를 막는 지점 | `.env` 에 `GITHUB_TOKEN` 없이 푸시 | Contents PUT 이 **401** — 공개 저장소라 조회(REPO동기화)는 되지만 쓰기만 막힌다. 그래서 401/403 문구를 토큰 설정 여부로 나눴다 |
+| 신규 생성 경로 | 토큰(contents:write) 설정 후 프로젝트 1건 푸시 | `created=true`, 커밋 `63ac3bb`, `src/docs/{project_id}.txt` **added**, 커밋 메시지 `프로젝트 설명 2026-10-14` |
+| 내용 일치 | 저장소 raw 파일과 DB `project_description` 비교 | 283자 **완전 일치** (UTF-8 한글·HTML 그대로) |
+| 교체 경로(sha 포함 PUT) | 같은 프로젝트를 한 번 더 푸시 | `created=false`, 커밋 `6466def` — 422 없이 성공 |
+| 재푸시의 멱등성 | 두 번째 커밋의 diff | `files: []`, `stats: 0` — 파일은 그대로이고 **빈 커밋**이 하나 쌓인다 (결정 상세 8) |
 
 실측용 임시 프로젝트 행은 확인 뒤 삭제했다(남겨 두면 e2e 실행마다 GitHub 를 호출한다).
 
@@ -198,7 +244,7 @@ public interface ScmClient {
 
 ## 운영 주의
 
-- **`GITHUB_TOKEN`** 을 `.env` 에 넣는다(선택). 없으면 공개 저장소만, 시간당 60회. 있으면 시간당 5,000회이며 토큰이 읽을 수 있는 비공개 저장소도 된다. 권한은 대상 저장소의 **Contents: read** 면 충분하다(fine-grained PAT 기준).
+- **`GITHUB_TOKEN`** 을 `.env` 에 넣는다(선택). 없으면 공개 저장소만, 시간당 60회. 있으면 시간당 5,000회이며 토큰이 읽을 수 있는 비공개 저장소도 된다. 권한은 REPO동기화만 쓸 때는 대상 저장소의 **Contents: read** 로 충분하지만, **REPO PUSH 는 Contents: read and write** 가 필요하다(fine-grained PAT 기준). 읽기 전용 토큰으로 푸시하면 403 이다.
 - `application-local.yaml` / `application-e2e.yaml` 은 **gitignore 대상**이다. `scm:` 블록이 커밋에 들어가지 않으므로 새 환경에는 직접 넣어야 한다. 빠지면 `GitHubProperties` 값이 비어 `web-host` 가 null 이 되고, 모든 GitHub URL 이 "지원하지 않는 저장소 URL" 로 `FAILED` 처리된다(오류 원인이 설정 누락이라는 것이 드러나지 않으니 주의).
 
   ```yaml
@@ -231,6 +277,7 @@ public interface ScmClient {
 |---|---|
 | 2026-10-13 | 최초 작성 — `ScmClient` 추상화, GitHub `RestClient` 구현, `{req_id}` 매칭, 교체/유지 규칙 |
 | 2026-10-13 | 사용자 이름(소유자) 조건 제거 — 전체 프로젝트 대상, `update_user_id` 는 실행자 기록 |
+| 2026-10-14 | REPO PUSH 추가 — `ScmClient.putFile`(default), GitHub Contents API, `src/docs/{project_id}.txt`, 소유권 규칙 적용 |
 
 ## 관련 문서
 

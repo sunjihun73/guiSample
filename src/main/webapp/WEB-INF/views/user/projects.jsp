@@ -159,6 +159,10 @@
             <%-- 삭제는 수정 모드에서만 보인다(openEditPopup 이 표시, openCreatePopup 이 숨김). --%>
             <button type="button" id="btnPopupDelete" class="search-form__btn search-form__btn--destructive"
                     style="display:none;">삭제</button>
+            <%-- REPO PUSH — 저장된 프로젝트 설명(HTML)을 저장소의 src/docs/{project_id}.txt 로 커밋한다.
+                 아직 저장되지 않은 등록 모드에서는 숨긴다(openEditPopup 이 표시, openCreatePopup 이 숨김). --%>
+            <button type="button" id="btnPopupRepoPush" class="search-form__btn search-form__btn--gray"
+                    style="display:none;">REPO PUSH</button>
             <button type="button" id="btnPopupSave"   class="search-form__btn">저장</button>
         </div>
     </div>
@@ -321,6 +325,9 @@
         let saveUrl   = '${pageContext.request.contextPath}/user/project/projects';
         let $popup    = $("#projectPopup");
         let popupMode = "create";   // "create" | "edit"
+        /* 팝업을 열 때 들어온 설명 HTML. REPO PUSH 는 DB 값을 올리므로,
+           이 값과 에디터 내용이 다르면 "저장하지 않은 변경은 반영되지 않는다"고 먼저 알린다. */
+        let loadedDescHtml = "";
 
         function openCreatePopup() {
             popupMode = "create";
@@ -328,6 +335,7 @@
             $("#projectPopupDesc").text("프로젝트 정보를 입력한 뒤 저장하세요.");
             $("#popupProjectIdField").hide();
             $("#btnPopupDelete").hide();     // 아직 없는 프로젝트이므로 삭제 불가
+            $("#btnPopupRepoPush").hide();   // 저장 전에는 푸시할 DB 값이 없다
             $("#popupProjectId").val("");
             $("#popupProjectName").val("");
             $("#popupReqId").val("");
@@ -337,6 +345,7 @@
             $("#popupProjectOwnerName").val($("#popupProjectOwnerName").attr("data-login-name"));
             $popup.addClass("is-open").attr("aria-hidden", "false");
             ensureDescEditor();     // 팝업이 보이는 상태에서 생성해야 크기 계산이 정상
+            loadedDescHtml = "";
             setDescHtml("");
             $("#popupProjectName").trigger("focus");
         }
@@ -350,6 +359,7 @@
             $("#popupProjectIdField").hide();
             $("#popupProjectId").val(project.projectId);
             $("#btnPopupDelete").show();
+            $("#btnPopupRepoPush").show();
             $("#popupProjectName").val(project.projectName);
             $("#popupProjectOwnerName").val(project.projectOwnerName);
             $("#popupReqId").val(project.reqId || "");
@@ -357,7 +367,8 @@
             $("#popupFileNames").val(project.fileNames || "");
             $popup.addClass("is-open").attr("aria-hidden", "false");
             ensureDescEditor();     // 팝업이 보이는 상태에서 생성해야 크기 계산이 정상
-            setDescHtml(project.projectDescription || "");
+            loadedDescHtml = project.projectDescription || "";
+            setDescHtml(loadedDescHtml);
             $("#popupProjectName").trigger("focus");
         }
 
@@ -453,6 +464,56 @@
             });
         }
 
+        /* ── REPO PUSH (수정 팝업 전용) ──
+           저장된 project_description(HTML)을 저장소의 src/docs/{project_id}.txt 로 커밋한다.
+           올라가는 값은 서버가 DB 에서 읽으므로, 에디터에 저장하지 않은 변경이 있으면 먼저 알린다.
+           (대화상자는 스크립트를 멈추지 않으므로 진행은 onConfirm 콜백으로 이어받는다.) */
+        function confirmRepoPush() {
+            if (getDescHtml() !== loadedDescHtml) {
+                appDialog.confirm("저장하지 않은 설명 변경은 푸시에 반영되지 않습니다.\n"
+                        + "저장된 내용으로 푸시하시겠습니까?", {
+                    title:       "REPO PUSH",
+                    tone:        "warn",
+                    confirmText: "푸시",
+                    cancelText:  "취소",
+                    onConfirm:   pushRepoDescription
+                });
+                return;
+            }
+            pushRepoDescription();
+        }
+
+        function pushRepoDescription() {
+            let projectId = $("#popupProjectId").val();
+            let $btn      = $("#btnPopupRepoPush");
+            $btn.prop("disabled", true);
+
+            $.ajax({
+                url:      saveUrl + "/" + encodeURIComponent(projectId) + "/repo-push",
+                type:     "POST",
+                dataType: "json"
+            }).done(function (data) {
+                if (data && data.success) {
+                    let r = data.result;
+                    appDialog.alert("프로젝트 설명을 저장소에 푸시했습니다.\n\n"
+                            + "저장소: " + r.repoUrl + "\n"
+                            + "경로: " + r.path + " (" + (r.created ? "신규 생성" : "내용 교체") + ")\n"
+                            + "커밋 메시지: " + r.commitMessage,
+                        { title: "REPO PUSH" });
+                } else {
+                    appDialog.warn("REPO PUSH 에 실패했습니다.\n" + ((data && data.message) || ""),
+                                   { title: "REPO PUSH" });
+                }
+            })
+            .fail(function (xhr, status, error) {
+                appDialog.warn("REPO PUSH 중 오류가 발생했습니다.\n" + status + " : " + error,
+                               { title: "REPO PUSH" });
+            })
+            .always(function () {
+                $btn.prop("disabled", false);
+            });
+        }
+
         // "상세" 버튼 클릭 → 단건 조회 후 수정 팝업 오픈
         // (projectDescription은 HTML이라 그리드 셀에 싣지 않고 매번 단건 API로 로드.
         //  조회 실패 시 팝업을 열지 않음 — UPDATE가 description을 무조건 SET 하므로
@@ -535,6 +596,7 @@
         $("#projectPopupDim").on("click", closePopup);
         $("#btnPopupSave").on("click", saveProject);
         $("#btnPopupDelete").on("click", confirmDeleteProject);
+        $("#btnPopupRepoPush").on("click", confirmRepoPush);
     });
 </script>
 

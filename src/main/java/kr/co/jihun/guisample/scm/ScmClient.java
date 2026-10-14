@@ -24,4 +24,20 @@ public interface ScmClient
 
     /** 커밋에서 변경된 파일 경로 목록 (저장소 루트 기준 상대 경로). */
     List<String> findChangedFiles(String repoUrl, String commitId);
+
+    /**
+     * 파일 하나를 기본 브랜치에 커밋한다 (없으면 생성, 있으면 내용 교체).
+     *
+     * <p>조회만 지원하는 구현(읽기 전용 미러 등)은 재정의하지 않는다 — 기본 구현이
+     * {@link ScmException} 을 던지므로 호출 측은 "지원하지 않는 저장소"로 같게 처리할 수 있다.
+     *
+     * @param path          저장소 루트 기준 상대 경로 (예: {@code src/docs/foo.txt})
+     * @param content       파일 내용 (UTF-8 로 저장된다)
+     * @param commitMessage 커밋 메시지
+     * @return 푸시 결과 (생성/갱신 여부와 커밋 식별자)
+     */
+    default ScmPushResult putFile(String repoUrl, String path, String content, String commitMessage)
+    {
+        throw new ScmException("이 저장소는 파일 푸시를 지원하지 않습니다: " + repoUrl);
+    }
 }

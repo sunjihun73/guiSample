@@ -84,12 +84,14 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - userTask id(`step1`/`step2`/`step3`)가 REST 의 `step` 파라미터·화면 파일명과 1:1 이다. **id 를 바꾸면 `WorkflowService.STEP_KEYS` 와 스텝 화면 3개를 함께 고쳐야 한다.**
 - 완료 요청은 태스크 id 와 함께 **화면의 단계(`step`)를 같이 보낸다** — 오래된 목록으로 이미 넘어간 태스크를 다시 완료하는 것을 서버가 거부한다.
 
-### REPO동기화 — 저장소 커밋 → `project_master.file_names`
+### REPO동기화 / REPO PUSH — 저장소 ↔ `project_master`
 
 - 설계 근거는 **ADR 0007**.
 - 프로젝트 목록의 **REPO동기화** 버튼 → `POST /user/project/projects/repo-sync` → `RepoSyncService`. `repo_url`·`req_id` 가 모두 있는 **전체 프로젝트**가 대상이며(**데이터 소유권 규칙의 의도된 예외** — 대상 선정·UPDATE 모두 소유자/사용자 이름 조건 없음, `update_user_id` 에 실행자만 기록), 최근 `scm.sync.lookback-days`(30)일 커밋 메시지의 `{…}` 값이 `req_id` 와 **정확히 일치**하는 커밋들의 변경 파일 합집합(정렬·줄바꿈 구분)으로 `file_names` 를 **교체**한다. 일치 커밋이 없으면 기존 값을 그대로 둔다.
+- **REPO PUSH** (프로젝트 수정 팝업, 저장 버튼 왼쪽) → `POST /user/project/projects/{projectId}/repo-push` → `RepoPushService`. 저장된 `project_description`(HTML)을 저장소의 `src/docs/{project_id}.txt` 로 커밋한다(커밋 메시지 `프로젝트 설명 yyyy-MM-dd`). **푸시는 소유권 규칙을 지킨다**(동기화와 달리 예외가 아니다) — 소유자 조건이 걸린 단건 조회로 대상을 집는다. 내용은 요청 본문이 아니라 **DB 값**이라 저장하지 않은 편집은 올라가지 않는다(화면이 먼저 확인받는다). 설명·`repo_url` 이 비면 호출하지 않고 거부한다. 토큰에 **contents:write** 권한이 필요하다.
 - 저장소 종류는 `scm` 패키지의 **`ScmClient` 인터페이스 뒤에 숨긴다**. `ScmClientResolver` 가 `supports(repoUrl)` 로 구현을 고르므로, GitLab·SVN 등은 **구현체 빈을 하나 추가**하면 되고 `RepoSyncService` 는 손대지 않는다. 현재 구현은 `scm/github/GitHubScmClient` 하나(설정 `scm.github.*`, 두 프로파일 yaml 모두).
-- GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 2개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
+- 쓰기는 `ScmClient.putFile` **default 메서드**다(기본 구현이 "지원하지 않음" 예외) — 조회만 하는 구현체가 깨지지 않게. GitHub 는 Contents API(GET 으로 blob sha 확인 → PUT, 기본 브랜치)로 구현한다. **경로는 URI 변수 하나로 넘기면 안 된다** — 슬래시가 `%2F` 로 인코딩돼 404 가 된다. `pathSegment` 로 쪼개 넣는다(`GitHubScmClient.contentsUri`, 회귀 테스트 있음).
+- GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 몇 개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
 - 외부 HTTP 를 기다리는 동안 커넥션을 잡지 않도록 트랜잭션 없이 프로젝트 단위로 UPDATE 한다. 저장소 하나가 실패해도 나머지는 진행되고, 실패는 결과 항목 `FAILED` 로 돌아온다.
 
 ### 프론트 규약 (JSP)
@@ -112,7 +114,7 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 
 ## 문서
 
-- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화 흐름을 바꾸기 전에 읽을 것.**
+- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화·REPO PUSH(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화·PUSH 흐름을 바꾸기 전에 읽을 것.**
 - `src/docs/measurements.md` — 검색 품질·비용 실측 이력. **임베딩 모델이나 검색 임계값을 바꾸기 전에 읽고, 바꾼 뒤에는 같은 형식으로 추가할 것.**
 - `_workspace/00_architect_design.md` — 채팅 세션 기능(chat_master/chat_detail) 상세 설계. 나머지 `_workspace/*` 는 하위 에이전트 작업 요약, `_workspace_prev_*` 는 이전 회차 보관본.
 - `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준으로 갱신). 기능·API 를 바꾸면 함께 고칠 것.
@@ -132,3 +134,4 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 | 2026-09-17 | 하이브리드 검색(BM25+RRF)·RAG 소유권 필터 반영 | RAG·소유권·스키마 | ADR 0005 |
 | 2026-09-22 | Flowable 워크플로우(스텝1~3 + 종료 조회 화면) 추가 | 워크플로우·DataSource·사이드바 | 전용 DB(flowable-db) 분리, 사이드바 공통화 |
 | 2026-10-13 | 프로젝트 req_id/repo_url/file_names 컬럼, REPO동기화(ScmClient 추상화 + GitHub 구현) 추가 | 프로젝트·scm·src/test | 저장소 종류 확장(SVN 등) 대비 |
+| 2026-10-14 | REPO PUSH(프로젝트 설명 → 저장소 `src/docs/{project_id}.txt`) 추가 | 프로젝트 팝업·scm(`putFile`)·src/test·e2e | 설계 근거 ADR 0007 결정 상세 8 |
