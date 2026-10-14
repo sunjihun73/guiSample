@@ -1,0 +1,3 @@
+<p><span style="font-size: 18pt;">수정된 </span><strong><span style="font-size: 18pt;">설명</span></strong><span style="font-size: 18pt;">입니다.</span></p>
+<p><span style="font-size: 18pt;">수정된 설명입니다.&nbsp;</span></p>
+<p><span style="font-size: 18pt;">TinyMCE 에디터로 교체하였습니다.&nbsp;</span></p>
