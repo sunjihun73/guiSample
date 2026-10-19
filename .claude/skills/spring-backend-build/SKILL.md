@@ -1,140 +1,116 @@
 ---
 name: spring-backend-build
-description: Spring Boot 4.0.x + Spring AI 백엔드 Java 코드를 작성할 때 사용. Controller(REST/JSP 라우팅), Service(트랜잭션), Config(빈 설정), VO/DTO(Lombok)를 kr.co.jihun.guisample 패키지 컨벤션에 맞게 생성. ChatClient·VectorStore 빈 구성, QuestionAnswerAdvisor 와이어링, Mapper 주입 패턴, REST 응답 DTO shape 안정성 보장. spring-backend-engineer 에이전트 전용. "Spring Boot 컨트롤러 생성", "Spring AI 통합", "RAG API 구현" 요청 시 반드시 트리거.
+description: guiSample 의 Spring Boot 4 + Spring AI(2.0.0-M4) + Flowable 백엔드 Java 코드를 작성하는 방법. controller/user 의 REST·JSP 라우팅, service, config, dto, advisor, scm 구현체, src/test 단위 테스트를 기존 컨벤션(dto 패키지, HashMap 매퍼 파라미터, jqGrid 응답, LoginUserSession 소유권, SSE onErrorResume, 두 프로파일 yaml)에 맞춘다. spring-backend-engineer 가 사용한다. "컨트롤러/서비스 추가", "REST API 구현", "Spring AI 어드바이저 수정", "ScmClient 구현체 추가", "워크플로우 서비스 수정" 요청 시 트리거.
 ---
 
 ## 사용 시점
 
-spring-backend-engineer 에이전트가 설계 문서(`_workspace/00_architect_design.md`)에 따라 백엔드 Java 코드를 작성할 때.
+spring-backend-engineer 가 설계 문서에 따라 백엔드 코드를 작성할 때.
 
-## 패키지 구조 규약
+## 패키지 구조 (실제)
 
 ```
 kr.co.jihun.guisample/
-├── controller/user/
-│   ├── MainController.java          (JSP 리턴)
-│   └── *RestController.java         (REST API, @RestController + @RequestMapping)
-├── service/
-│   └── *Service.java                (@Service, @Transactional)
-├── config/
-│   ├── DataSourceConfig.java        (기존)
-│   └── *Config.java                 (Spring AI 빈 등)
-└── vo/
-    └── *DTO.java                    (Lombok @Data @Builder)
+├── controller/user/   MainController(JSP 라우팅 /user/**), *RestController
+├── service/           *Service
+├── config/            DataSourceConfig, FlowableConfig, SecurityConfig, SpringAiConfig
+├── dto/               *DTO, *Response, *Result (typeAliasesPackage 대상)
+├── mapper/            MyBatis interface (data 담당)
+├── advisor/           RagContextAdvisor, RagRetrievalSettings
+├── scm/               ScmClient, ScmClientResolver, github/GitHubScmClient
+├── session/           LoginUserSession, SessionUser
+└── filter/            KeycloakUserProvisioningFilter (빈 아님)
 ```
 
 ## 코드 패턴
 
-### REST Controller
+### 목록 REST — jqGrid shape + 소유권 (기존 `KnowledgeRestController` 형태)
 
 ```java
-@RestController
-@RequestMapping("/api/rag")
-@RequiredArgsConstructor
-@Slf4j
-public class RagRestController {
-    private final RagService ragService;
+@GetMapping("/items")
+public Map<String, Object> itemList(@RequestParam(defaultValue = "1") int page,
+                                    @RequestParam(defaultValue = "10") int rows)
+{
+    HashMap<String, Object> param = new HashMap<>();
+    /* 소유자 조건 — 총건수와 목록이 같은 조건을 봐야 하므로 count 보다 먼저 넣는다. */
+    param.put("createUserId", loginUserSession.requireUserName());
 
-    @PostMapping("/query")
-    public QueryResponse query(@RequestBody QueryRequest req) {
-        return ragService.query(req);
-    }
+    int totalRecords = itemService.countItem(param);
+    int totalPages   = totalRecords == 0 ? 0 : (int) Math.ceil((double) totalRecords / rows);
+
+    param.put("startRow", (page - 1) * rows);   // mapper 는 pageSize != null 일 때만 LIMIT
+    param.put("pageSize", rows);
+
+    Map<String, Object> result = new HashMap<>();
+    result.put("page", page);
+    result.put("total", totalPages);
+    result.put("records", totalRecords);
+    result.put("rows", itemService.selectItemList(param));
+    return result;
 }
 ```
 
-원칙:
-- 응답을 `Map<String,Object>`로 반환하지 않는다. 항상 DTO
-- `@RequestBody` 입력은 DTO로 수신. validation이 필요하면 `@Valid` + Bean Validation
-- 예외는 `@ExceptionHandler`로 표준화
+- 목록은 이 shape 를 유지한다(화면의 jqGrid 가 이 키를 읽는다). 단건·명령 응답은 DTO(`RepoPushResult` 등)
+- 매퍼 파라미터는 `HashMap<String,Object>`(기존 매퍼와 동일). 키 이름은 data 와 합의한 것을 그대로
 
-### Service
+### 소유권
 
-```java
-@Service
-@RequiredArgsConstructor
-@Transactional
-@Slf4j
-public class RagService {
-    private final ChatClient chatClient;
-    private final VectorStore vectorStore;
-    private final RagChunkMapper chunkMapper;
+- 기준값은 **컨트롤러에서** `loginUserSession.requireUserName()`. 값이 없으면 예외 — 조건이 조용히 빠져 남의 데이터가 보이는 것을 막는다
+- 소유자 컬럼이 없는 자식 데이터(`chat_detail`, `vector_store`)는 상위 엔터티 소유권을 먼저 확인하고 아니면 빈 목록 (`ChatService.selectMessages` 패턴)
+- 소유권 예외는 설계 문서에 근거가 있을 때만
 
-    public QueryResponse query(QueryRequest req) {
-        String answer = chatClient.prompt()
-            .user(req.getQuestion())
-            .advisors(QuestionAnswerAdvisor.builder(vectorStore)
-                .searchRequest(SearchRequest.builder().topK(5).build())
-                .build())
-            .call()
-            .content();
-        return QueryResponse.builder().answer(answer).build();
-    }
-}
-```
+### 비동기·SSE
 
-원칙:
-- 비즈니스 로직은 Service에. Controller는 얇게
-- Mapper는 주입받아 사용. SQL을 Service에 직접 쓰지 않는다
-- `@Transactional`은 쓰기 메서드에 필수
+- `LoginUserSession` 은 요청 스레드 바인딩 프록시 → `Schedulers.boundedElastic()` 안에서 호출하면 실패. 컨트롤러 본문에서 꺼내 파라미터로 전달 (`AIRestController.getDocs` 참조)
+- `text/event-stream` 엔드포인트는 예외를 밖으로 던지지 않는다(Accept 협상 실패 → 500 + 빈 본문). `onErrorResume` 으로 텍스트 1건 + 정상 종료
+- 스트리밍 경로의 블로킹 호출은 `boundedElastic` 으로 오프로딩
 
-### Spring AI Config
+### Spring AI
 
-```java
-@Configuration
-public class SpringAiConfig {
-    @Bean
-    public ChatClient chatClient(ChatModel chatModel) {
-        return ChatClient.builder(chatModel)
-            .defaultSystem("""
-                당신은 친절한 한국어 RAG 비서입니다.
-                제공된 컨텍스트만 사용하여 답변하세요.
-                모르면 모른다고 답하세요.
-                """)
-            .build();
-    }
-}
-```
+- `ChatModel`·`EmbeddingModel`·`VectorStore` 는 스타터 자동구성, `ChatClient` 는 `SpringAiConfig`
+- RAG 검색은 `RagContextAdvisor` → `HybridRetrievalService`. 요청별 값은 `.advisors(spec -> spec.param("category_id", ...).param("user_name", ...))`
+- `QuestionAnswerAdvisor` 를 새로 붙이지 않는다(하이브리드 검색·소유권 필터 우회)
+- 프롬프트 컨텍스트 삽입은 `String.replace` 리터럴 치환
 
-원칙:
-- `ChatModel`, `EmbeddingModel`, `VectorStore`는 spring-ai-starter가 자동 구성하므로 주입만 받는다
-- 추가 빈만 직접 등록
+### 트랜잭션 · DataSource
 
-### DTO
+- 앱 기본 트랜잭션 매니저는 `DataSourceConfig.transactionManager()`(`@Primary`). 지우거나 덮지 않는다 — 지우면 `@Transactional` 이 워크플로우 DB 를 잡는다
+- 엔진(5433)과 앱(5432) 변경은 한 트랜잭션이 아니다. 설계 문서의 순서·보상을 따른다
+- 외부 HTTP(SCM 등)를 기다리는 구간에는 트랜잭션을 걸지 않는다
 
-```java
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class QueryResponse {
-    private String answer;
-    private List<SourceDTO> sources;
-}
-```
+### SCM
 
-원칙:
-- 필드명은 JSP/JS와 일치하게. 이름을 바꾸면 모든 소비자를 함께 수정
-- 응답에 null 가능 필드가 있으면 명시적으로 문서화
+- 새 저장소 종류 = `ScmClient` 구현체 `@Component` + `supports(repoUrl)`. 쓰기는 `putFile` 오버라이드
+- `RestClient` 사용. 경로는 `UriBuilder.pathSegment(...)` 로 쪼갠다(`GitHubScmClient.contentsUri` 와 회귀 테스트 참조)
+
+### 설정
+
+- `application-local.yaml`·`application-e2e.yaml` 을 **함께** 수정(현재 차이는 chat 모델명뿐). `application.yaml` 은 프로파일 선택만
+
+### 단위 테스트
+
+- `src/test` 는 스프링 컨텍스트·DB·네트워크 없는 순수 테스트만 둔다(매칭·파싱·URI 조립 같은 로직). 컨텍스트가 필요한 검증은 e2e 몫
 
 ## 작업 순서
 
-1. `_workspace/00_architect_design.md`의 API 스펙·분배 지시 섹션을 정독
-2. 패키지별로 생성 순서: DTO → Mapper(요청만, mybatis-data-engineer에 위임) → Service → Controller → Config
-3. Mapper 시그니처가 필요하면 `SendMessage`로 mybatis-data-engineer에 요청하고, 응답 받기 전까지 다른 작업 진행
-4. 작성 후 `./gradlew compileJava`로 컴파일 확인
-5. `_workspace/01_backend_summary.md`에 파일 목록·엔드포인트·REST 응답 shape 표 작성
-6. jsp-frontend-engineer에 `SendMessage`로 응답 shape 공유
-7. integration-qa에 `SendMessage`로 검증 요청
+1. 설계 문서 §3(소유권)·§5(API)·§8(분배) 정독, 비슷한 기존 컨트롤러·서비스를 하나 골라 읽는다
+2. DTO → (매퍼 시그니처 요청) → Service → Controller → Config
+3. `./gradlew compileJava`, 해당 시 `./gradlew test`
+4. `_workspace/01_backend_summary.md` 작성
+5. `frontend` 에 응답 shape, `qa` 에 검증 요청 `SendMessage`
 
 ## 흔한 함정
 
 | 함정 | 해결 |
-|------|-----|
-| Spring Boot 4.x 에서 일부 import 경로가 바뀜 (jakarta.*) | jakarta.persistence/jakarta.servlet 사용 |
+|------|------|
+| DTO 를 `vo/` 에 생성 | `dto/` — typeAliasesPackage 와 ResultMap type 이 이 패키지를 본다 |
+| count 뒤에 소유자 조건 추가 | 총건수와 목록 불일치. 조건을 count 앞에 |
+| `boundedElastic` 안에서 `loginUserSession` 호출 | 컨트롤러에서 미리 꺼내 전달 |
+| SSE 메서드에서 예외 throw | `onErrorResume` 으로 정상 종료 |
+| `KeycloakUserProvisioningFilter` 를 `@Component` 로 | 이중 실행. `SecurityConfig` 에서 직접 생성 |
+| 한쪽 프로파일 yaml 만 수정 | 두 파일 함께 |
 | `@Autowired` 필드 주입 | 생성자 주입 + `@RequiredArgsConstructor` |
-| `Map<String,Object>` 응답 | DTO 클래스 정의 후 반환 |
-| `@RestController` 인데 JSP 이름 리턴 | `@Controller` 사용 |
 
 ## 후속 작업
 
-`_workspace/01_backend_summary.md`가 있으면 먼저 읽는다. 부분 수정 요청이면 해당 파일만 Edit. 새 엔드포인트 추가는 표에 행을 추가.
+`_workspace/01_backend_summary.md` 를 먼저 읽는다. 부분 수정이면 해당 파일만 Edit, 새 엔드포인트는 표에 행 추가.

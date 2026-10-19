@@ -1,144 +1,137 @@
 ---
 name: jsp-view-build
-description: JSP + CSS + Vanilla JS 프론트엔드 코드를 작성할 때 사용. WEB-INF/views/ 하위 JSP, common.css 확장, fetch+async/await 기반 REST 클라이언트, 채팅·검색 UI, JSTL/EL 사용, XSS 방지를 일관되게 적용. 백엔드가 확정한 REST 응답 shape을 정확히 파싱. jsp-frontend-engineer 에이전트 전용. "JSP 뷰 생성", "채팅 UI", "검색 화면", "프론트 RAG 통합" 요청 시 반드시 트리거.
+description: guiSample JSP 화면을 작성하는 방법. WEB-INF/views 의 JSP 골격(CSRF 메타, HtmlUtils 이스케이프), 정적 include 사이드바(activeMenu)·appDialog 조각, jQuery + free-jqGrid 목록(jqGrid shape 파싱), 레이어 팝업, fetch 기반 SSE 스트림, 단일 common.css, JS let 규칙, e2e 셀렉터 보존을 다룬다. jsp-frontend-engineer 가 사용한다. "화면 추가", "JSP 수정", "그리드 컬럼 추가", "팝업 추가", "채팅 화면 수정", "alert 를 appDialog 로" 요청 시 트리거.
 ---
 
 ## 사용 시점
 
-jsp-frontend-engineer 에이전트가 RAG 기능의 화면을 만들 때.
+jsp-frontend-engineer 가 화면을 만들거나 고칠 때. 먼저 **같은 종류의 기존 화면**을 읽는다: 목록+팝업 → `user/projects.jsp`, 단계 화면 → `user/workflow/step1.jsp`, 채팅·SSE → `user/rag.jsp`.
 
-## 디렉토리 구조
+## 구조 (실제)
 
 ```
 src/main/webapp/WEB-INF/views/
-  └── user/*.jsp                     (사용자 화면. prefix=/WEB-INF/views/, suffix=.jsp)
+  common/sidebar.jsp, common/dialog.jsp     (정적 include 조각)
+  user/*.jsp, user/workflow/*.jsp
 src/main/resources/static/
-  ├── css/common.css                 (전역 스타일 확장)
-  ├── css/{page}.css                 (페이지 전용, 필요 시)
-  └── js/{page}.js                   (페이지 전용 스크립트)
+  css/common.css                            (유일한 스타일 파일)
+  js/csrf.js, js/dialog.js, js/{기능}.js
 ```
 
-application.yaml: `spring.mvc.view.prefix=/WEB-INF/views/`, `suffix=.jsp`.
+라우팅은 `MainController`(`/user/**`)에 `backend` 가 추가한다.
 
-## JSP 패턴
+## JSP 골격
 
 ```jsp
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
-<%@ taglib prefix="c" uri="jakarta.tags.core" %>
+<%@ page import="org.springframework.web.util.HtmlUtils" %>
+<%-- 사용자 유래 문자열은 출력 전에 HtmlUtils.htmlEscape — EL 은 자동 이스케이프가 없다 --%>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>RAG 질의</title>
-    <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="/css/rag.css">
+    <link rel="stylesheet" href="${pageContext.request.contextPath}/css/common.css">
+    <meta name="_csrf" content="${_csrf.token}">
+    <meta name="_csrf_header" content="${_csrf.headerName}">
+    <%-- jqGrid 화면이면 jquery-ui / free-jqgrid CSS (projects.jsp 와 같은 버전) --%>
 </head>
 <body>
-    <main class="rag-page">
-        <h1>RAG 질의</h1>
-        <form id="ragForm" onsubmit="return false;">
-            <textarea id="question" placeholder="질문을 입력하세요"></textarea>
-            <button type="button" id="askBtn">질문하기</button>
-        </form>
-        <section id="answer" class="answer-box"></section>
-        <section id="sources" class="sources-box"></section>
-    </main>
-    <script src="/js/rag.js"></script>
+    ...
+    <% String activeMenu = "menu-key"; %>
+    <%@ include file="/WEB-INF/views/common/sidebar.jsp" %>
+    ...
+<%@ include file="/WEB-INF/views/common/dialog.jsp" %>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<%-- jqGrid 화면이면 free-jqgrid 4.15.5 + grid.locale-kr --%>
+<script src="${pageContext.request.contextPath}/js/csrf.js"></script>
+<script src="${pageContext.request.contextPath}/js/dialog.js"></script>
+<script src="${pageContext.request.contextPath}/js/{기능}.js"></script>
 </body>
 </html>
 ```
 
-원칙:
-- taglib URI는 Spring Boot 4 / Jakarta EE 기반이므로 `jakarta.tags.core`
-- 전역은 common.css, 페이지 전용은 별도 파일
-- 인라인 JS 지양. 외부 파일 분리
-- 사용자 입력 표시 시 `<c:out>` 또는 JS의 `textContent` 사용
+규칙과 이유:
+- **사이드바는 정적 include** — `<jsp:include>` 는 `DispatcherType.INCLUDE` 를 일으키는데 `SecurityConfig` 는 FORWARD/ERROR 만 허용한다
+- 새 조각 파일에는 `<%@ page pageEncoding="UTF-8" %>` 필수 — 없으면 ISO-8859-1 로 읽혀 한글이 깨진다
+- 새 메뉴는 `sidebar.jsp` 한 곳에만 추가하고 `activeMenu` 키를 맞춘다
+- `dialog.js` 는 기능 스크립트보다 **먼저** 로드
+- `csrf.js` 가 jQuery ajax 에 CSRF 헤더를 자동 부착, fetch 는 `window.csrfHeader()` 로. 401/403 이면 페이지를 새로고침해 로그인으로 돌린다
 
-## 클라이언트 JS 패턴
+## 목록 — jqGrid
+
+- 서버 응답은 `{page, total, records, rows[]}`. `jsonReader` 는 기본 키 그대로 두고 `colModel.name` 을 `rows` 원소 DTO 필드명(camelCase)과 1:1 로
+- 검색 조건 변경 시 `setGridParam({postData, page: 1}).trigger('reloadGrid')`
+- 셀에 사용자 문자열을 HTML 로 넣는 `formatter` 는 이스케이프 후 반환
+
+## 알림·확인 — appDialog
 
 ```javascript
-// /static/js/rag.js
-const askBtn = document.getElementById('askBtn');
-const questionEl = document.getElementById('question');
-const answerEl = document.getElementById('answer');
-const sourcesEl = document.getElementById('sources');
-
-askBtn.addEventListener('click', async () => {
-    const question = questionEl.value.trim();
-    if (!question) return;
-
-    answerEl.textContent = '답변 생성 중...';
-    sourcesEl.innerHTML = '';
-
-    try {
-        const res = await fetch('/api/rag/query', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({question})
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        // 응답 shape: { answer: string, sources: [{title, snippet}] }
-        answerEl.textContent = data.answer;
-        if (Array.isArray(data.sources)) {
-            data.sources.forEach(s => {
-                const li = document.createElement('li');
-                li.textContent = `${s.title} — ${s.snippet}`;
-                sourcesEl.appendChild(li);
-            });
-        }
-    } catch (e) {
-        answerEl.textContent = `오류: ${e.message}`;
-    }
+appDialog.warn('이름을 입력하세요.');
+appDialog.confirm('완료하시겠습니까?', {
+    onConfirm: function () { doComplete(); },
+    onCancel:  function () { /* 아무것도 안 함 */ }
 });
 ```
 
-원칙:
-- async/await + try/catch. 에러는 사용자에게 표시
-- 응답 필드는 백엔드 DTO와 정확히 일치 (spring-backend-engineer가 SendMessage로 공유한 shape)
-- 사용자 입력/응답 표시는 `textContent`. innerHTML 사용 시 정제된 내부 데이터만
+- **스크립트를 멈추지 않는다.** `if (confirm(...))` 를 `if (appDialog.confirm(...))` 로 옮기면 항상 진행된다 — 이어질 동작은 반드시 `onConfirm` 안에
+- 레이어 팝업(z-index 1000) 위에 뜨므로(1100) 등록 팝업 안 입력 검증에도 쓴다
+- 새 코드에 `alert()`/`confirm()` 금지. e2e 가 기본 대화상자 발생을 실패로 감시한다
 
-## CSS 확장 패턴
+## 스트리밍(SSE) — fetch
 
-common.css에 이미 있는 변수/유틸리티 우선 사용. 없으면 페이지 전용 CSS에 신규 정의.
-
-## 라우팅 추가
-
-새 JSP 페이지를 만들면 컨트롤러 라우팅이 필요. jsp-frontend-engineer는 직접 컨트롤러를 작성하지 말고 spring-backend-engineer에 `SendMessage`:
-
+```javascript
+let res = await fetch(DOCS_URL, {
+    method: 'POST',
+    headers: Object.assign({'Content-Type': 'application/json', 'Accept': 'text/event-stream'}, window.csrfHeader()),
+    body: JSON.stringify(payload)
+});
+if (res.status === 401 || res.status === 403) { window.location.reload(); return; }   // 세션 만료·CSRF 무효
+let reader = res.body.getReader();
 ```
-[요청] /user/rag → user/rag.jsp 라우팅 필요
-MainController 또는 새 컨트롤러에 @GetMapping("/user/rag") 추가 부탁
-```
+
+- 서버는 실패도 텍스트 1건 + 정상 종료(200)로 보낸다 — `res.ok` 만으로 성공 판단하지 말고 본문을 표시
+- 스트림 텍스트는 `textContent` 로 누적
+
+## CSS
+
+- `common.css` 에만 추가. 기존 토큰·클래스(DESIGN.md 의 Apple 스타일 토큰)를 먼저 찾아 재사용
+- 화면별 `.css` 파일, `style=""` 인라인 금지
+
+## e2e 셀렉터 보존
+
+Playwright 스펙(`e2e/specs/*.spec.ts`)은 JSP 의 실제 id/class 에 직접 의존한다(`chat.spec.ts` 상단에 목록). 기존 id/class 는 바꾸지 않는다. 불가피하면 스펙을 함께 고치고 `03_frontend_summary.md` 에 기록. 새 인터랙티브 요소에는 안정적인 `id` 를 붙인다.
+
+## XSS 체크리스트
+
+| 상황 | 방법 |
+|------|------|
+| JSP 에서 세션·DB 문자열 출력 | `HtmlUtils.htmlEscape(...)` 후 출력 |
+| ajax 결과를 DOM 에 | `textContent` / jQuery `.text()` |
+| jqGrid formatter | 이스케이프 후 HTML 조립 |
+| 설명처럼 HTML 을 그대로 보여야 하는 값 | 저장·표시 경로를 설계 문서에서 확인(임의로 innerHTML 금지) |
+| URL 에 사용자 입력 | `encodeURIComponent` |
 
 ## 작업 순서
 
-1. `_workspace/00_architect_design.md`의 UI 시나리오·API 스펙 정독
-2. spring-backend-engineer로부터 응답 shape SendMessage 확인 (없으면 요청)
-3. JSP 작성 → CSS 작성 → JS 작성
-4. 사용한 응답 필드를 백엔드 DTO와 grep으로 교차 확인
-5. `_workspace/03_frontend_summary.md`에 화면 라우트, 호출하는 엔드포인트, 응답 필드 사용 표 작성
-6. integration-qa에 `SendMessage`로 검증 요청
-
-## XSS 방지 체크리스트
-
-| 시나리오 | 안전한 방법 |
-|---------|----------|
-| 서버에서 받은 사용자 데이터를 JSP에 표시 | `<c:out value="${...}"/>` |
-| fetch 결과를 DOM에 표시 | `element.textContent = data.x` |
-| HTML 구조가 포함된 마크다운/리치 텍스트 | DOMPurify 등 정제 후 innerHTML (의존성 추가는 사용자 협의 필요) |
-| URL에 사용자 입력 | `encodeURIComponent` |
+1. 설계 문서 §5·§6, 같은 종류의 기존 JSP 정독
+2. `backend` 응답 shape 확인(없으면 요청)
+3. JSP → JS → common.css
+4. 자체 검증(필드 교차 확인, 금지 패턴 grep, id/class 변경 여부)
+5. `_workspace/03_frontend_summary.md` 작성, `qa` 에 검증 요청
 
 ## 흔한 함정
 
 | 함정 | 해결 |
-|------|-----|
-| `${question}` 같은 EL이 의도와 달리 평가됨 | JSP의 EL 충돌 시 `\${...}` 이스케이프 |
-| JSP가 404 — 라우팅 미등록 | 컨트롤러 `@GetMapping` 추가 요청 |
-| 응답 필드명 오타 | 백엔드 DTO와 1:1 매칭 검증 |
-| CSS 파일이 로드 안됨 | `/static/` 경로는 빠지므로 `/css/...`로 |
+|------|------|
+| `appDialog.confirm` 을 `if` 조건으로 | `onConfirm` 콜백 |
+| 사이드바를 `<jsp:include>` | 정적 `<%@ include %>` |
+| 조각 파일 한글 깨짐 | `pageEncoding="UTF-8"` |
+| 정적 경로를 `/static/css/...` 로 | `${pageContext.request.contextPath}/css/...` |
+| 화면 전용 CSS 파일 생성 | `common.css` 에 추가 |
+| `var` 선언 | `let` |
+| JSP 404 | `MainController` 라우팅 추가를 `backend` 에 요청 |
 
 ## 후속 작업
 
-`_workspace/03_frontend_summary.md`가 있으면 먼저 읽는다. 백엔드 응답 shape 변경 통지가 오면 영향받는 JS의 파서를 우선 갱신.
+`_workspace/03_frontend_summary.md` 를 먼저 읽는다. 응답 shape 변경 통지가 오면 파서부터 갱신.

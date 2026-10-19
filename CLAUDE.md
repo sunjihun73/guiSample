@@ -99,7 +99,7 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - 뷰는 `src/main/webapp/WEB-INF/views/`, 라우팅은 `MainController`(`/user/**`). 스타일은 `static/css/common.css` 단일 파일(화면별 인라인 스타일 금지).
 - 좌측 메뉴는 **`views/common/sidebar.jsp` 한 곳**에만 있다. 각 화면은 include 앞에 `String activeMenu` 를 선언하고 `<%@ include %>`(정적 include)로 끼운다. 런타임 `<jsp:include>` 는 `DispatcherType.INCLUDE` 를 일으키는데 `SecurityConfig` 는 FORWARD/ERROR 만 열어 두었으므로 쓰지 않는다. 조각 파일에는 **`<%@ page pageEncoding="UTF-8" %>` 가 반드시 있어야 한다** — 없으면 포함되는 파일이 ISO-8859-1 로 읽혀 메뉴 한글이 깨진다.
 - 알림·확인은 브라우저 기본 `alert()`/`confirm()` 대신 **`appDialog`**(마크업 `views/common/dialog.jsp`, 동작 `static/js/dialog.js`)를 쓴다. 화면은 조각을 정적 include 하고 `dialog.js` 를 `workflow.js` 보다 먼저 읽는다. **기본 대화상자와 달리 스크립트를 멈추지 않으므로** 확인 결과는 `onConfirm`/`onCancel` 콜백으로 이어받아야 한다 — `if (confirm(...))` 식으로 옮겨 적으면 항상 진행돼 버린다. 조각이 없는 화면에서 호출하면 기본 대화상자로 폴백한다.
-  현재 적용 범위는 워크플로우 화면 4개와 `projects.jsp`(전체)다. `rag.jsp`·`embedding.jsp` 등은 아직 `alert()` 를 쓴다. 대화상자(`.layer-popup--message`, z-index 1100)는 다른 레이어 팝업(1000) 위에 뜨므로 등록 팝업 안의 입력 검증에도 쓸 수 있다.
+  현재 적용 범위는 워크플로우 화면 4개와 `projects.jsp`(전체)다. 기본 `alert()` 를 직접 호출하는 화면은 `embedding.jsp` 하나가 남아 있다(`rag.jsp`·`dashboard.jsp` 는 대화상자를 쓰지 않는다). 대화상자(`.layer-popup--message`, z-index 1100)는 다른 레이어 팝업(1000) 위에 뜨므로 등록 팝업 안의 입력 검증에도 쓸 수 있다.
 - CSRF: 각 JSP `<head>` 의 `<meta name="_csrf">` / `_csrf_header` 를 `static/js/csrf.js` 가 읽어 jQuery ajax 에 자동 부착하고 fetch 용으로 `window.csrfHeader()` 를 노출한다. 401/403 이면 페이지를 새로고침해 Keycloak 로그인 흐름으로 되돌린다.
 - JSP EL 은 자동 이스케이프가 없다 — 사용자 유래 문자열은 `HtmlUtils.htmlEscape` 로 직접 이스케이프한다.
 - JSP 내 JS 변수 선언은 `var` 가 아니라 **`let`** 을 쓴다(커밋 90b316b 로 통일).
@@ -120,11 +120,11 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준으로 갱신). 기능·API 를 바꾸면 함께 고칠 것.
 - `DESIGN.md` — 앱 아키텍처가 아니라 UI 디자인 토큰(Apple 스타일) 스펙이다.
 
-## 하네스: Spring AI/RAG 기능 개발
+## 하네스: guiSample 기능 개발
 
-**목표:** Spring Boot 4 + MyBatis + PostgreSQL(pgvector) + JSP 환경에서 RAG 기능을 백엔드·데이터·프론트 전 계층에 걸쳐 일관되게 추가·수정한다.
+**목표:** Spring Boot 4 + Spring AI + Flowable + MyBatis + PostgreSQL(pgvector) + JSP 환경에서 기능을 백엔드·데이터·프론트 전 계층에 걸쳐 이 문서의 규칙대로 일관되게 추가·수정한다.
 
-**트리거:** RAG/Spring AI/벡터 검색/문서 인덱싱/챗봇 등 RAG 관련 신규·후속 작업 요청 시 `rag-feature-orchestrator` 스킬을 사용하라. 단순 질문(설계 조언, 사용법 문의)이나 1~2줄 수정은 직접 응답 가능.
+**호출 조건:** RAG·검색, 워크플로우, 프로젝트·REPO동기화/PUSH, 도메인 화면 등 2개 이상 계층에 걸친 신규·후속 작업 요청 시 `feature-orchestrator` 스킬을 사용한다. 단순 질문(설계 조언, 사용법 문의)이나 1~2줄 수정은 직접 응답해도 된다.
 
 **변경 이력:**
 | 날짜 | 변경 내용 | 대상 | 사유 |
@@ -135,3 +135,4 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 | 2026-09-22 | Flowable 워크플로우(스텝1~3 + 종료 조회 화면) 추가 | 워크플로우·DataSource·사이드바 | 전용 DB(flowable-db) 분리, 사이드바 공통화 |
 | 2026-10-13 | 프로젝트 req_id/repo_url/file_names 컬럼, REPO동기화(ScmClient 추상화 + GitHub 구현) 추가 | 프로젝트·scm·src/test | 저장소 종류 확장(SVN 등) 대비 |
 | 2026-10-14 | REPO PUSH(프로젝트 설명 → 저장소 `src/docs/{project_id}.txt`) 추가 | 프로젝트 팝업·scm(`putFile`)·src/test·e2e | 설계 근거 ADR 0007 결정 상세 8 |
+| 2026-10-19 | 하네스 점검 반영: 오케스트레이터 v2 전환(TeamCreate 제거 → `Agent(name:)`+`SendMessage`, Phase 3 에 `test`·e2e·MyBatis 통과 확인 추가), 범위를 RAG 외 기능까지 확장하며 `rag-feature-orchestrator`→`feature-orchestrator`·`rag-architect`→`feature-architect`·`spring-ai-rag-design`→`feature-design` 개명, 에이전트·스킬을 실제 컨벤션(dto 패키지, jqGrid·jQuery, `RagContextAdvisor`, `db/*.sql` 수동 적용, common.css 단일)과 규칙(소유권·`LoginUserSession`·매퍼 주석 `#{}`·appDialog·SSE·e2e 셀렉터)에 맞춤, QA 경계면 5→7, 모델 선택 근거 주석 | `.claude/agents` 전체·`.claude/skills` 전체 | 5월 구성 이후 코드와 하네스 불일치 누적, v1 도구 미동작 |
