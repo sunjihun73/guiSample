@@ -11,7 +11,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
 | **프로젝트 관리** | 프로젝트 목록 조회(검색·페이징), 등록·수정·삭제 팝업. 요청 ID(`req_id`)·저장소 URL(`repo_url`)·파일명(`file_names`) 입력, TinyMCE 설명 에디터 |
 | **REPO동기화** | 프로젝트의 GitHub 저장소에서 최근 30일 커밋을 읽어, 커밋 메시지의 `{요청ID}` 가 `req_id` 와 일치하는 커밋의 변경 파일로 `file_names` 를 채웁니다. 저장소 종류는 확장 가능하게 추상화되어 있습니다(SVN 등). |
 | **REPO PUSH** | 프로젝트 수정 팝업의 **REPO PUSH** 버튼으로 저장된 프로젝트 설명(HTML)을 저장소의 `src/docs/{project_id}.txt` 로 커밋합니다. 커밋 메시지는 `프로젝트 설명 yyyy-MM-dd`. |
-| **저장소끌어오기** | 저장소 URL·브랜치명을 넣고 **끌어오기**를 누르면 그 브랜치 최신 커밋의 파일 목록을 GitHub 처럼 폴더 탐색형 그리드로 보여 줍니다(서버에 clone 하지 않고 API 로 트리만 조회). 점검완료 버튼은 아직 동작이 없습니다. |
+| **저장소끌어오기** | 저장소 URL·브랜치명을 넣고 **끌어오기**를 누르면 그 브랜치 최신 커밋의 파일 목록을 GitHub 처럼 폴더 탐색형 그리드로 보여 주고, 폴더 선택창에서 고른 **PC 폴더의 `{저장소명}/` 아래에 그 커밋의 파일을 저장**합니다(같은 이름 파일은 덮어씀, 기존 폴더면 먼저 확인). 서버에 clone 하지 않습니다. Chrome/Edge 전용이며 http 주소에서는 보안 컨텍스트 설정이 필요합니다. 점검완료 버튼은 아직 동작이 없습니다. |
 | **지식베이스 색인** | 카테고리 등록 → 텍스트 파일 업로드 → 800토큰 청킹 → 임베딩 → pgvector 적재. 업로드한 파일·청크 목록 조회 |
 | **RAG 챗봇** | dense(pgvector) + BM25 키워드 검색을 RRF 로 융합한 하이브리드 검색, 카테고리 한정 검색, SSE 토큰 스트리밍, 대화 세션·메시지(토큰 사용량 포함) 저장 |
 | **가드레일** | 모든 LLM 호출은 LiteLLM 프록시를 거치며, 가드레일에 차단되면 오류 대신 "안전 정책에 따라 답변할 수 없습니다" 안내 문구로 응답합니다. |
@@ -108,7 +108,7 @@ SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun     # e2e 프로파일로 실행
 
 | 종류 | 위치 | 실행 | 범위 |
 |---|---|---|---|
-| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, REPO PUSH 경로·커밋 메시지·거부 조건, GitHub URL 파싱, 저장소끌어오기 트리 변환·정렬·브랜치 URI (스프링 컨텍스트·DB·네트워크 없음) |
+| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, REPO PUSH 경로·커밋 메시지·거부 조건, GitHub URL 파싱, 저장소끌어오기 트리 변환·정렬·브랜치 URI·압축본 해제·경로 방어·프레임 형식 (스프링 컨텍스트·DB·네트워크 없음) |
 | E2E | `e2e/` (별도 npm 프로젝트) | `cd e2e && npm test` | 로그인, 프로젝트, 채팅, 하이브리드 검색, 워크플로우, 저장소끌어오기 |
 
 E2E 는 앱과 외부 구성요소가 모두 떠 있어야 합니다. 누락 시 `setup/preflight.ts` 가 무엇을 띄워야 하는지 알려 주고 중단합니다. 최초 설정과 자주 막히는 지점은 [`e2e/README.md`](e2e/README.md) 를 참고하세요.
@@ -123,7 +123,7 @@ npm run report                           # 리포트 보기
 
 Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, 화면 요소의 id/class 를 바꾸면 E2E 가 깨집니다.
 
-저장소끌어오기 스펙의 `@github` 태그 2건은 실제 GitHub API 를 호출합니다(끌어오기 1회당 3회, 토큰이 없으면 시간당 60회). 한도가 찼거나 오프라인이면 `npx playwright test --grep-invert "@guardrail|@github"` 로 제외하세요.
+저장소끌어오기 스펙의 `@github` 태그 3건은 실제 GitHub API 를 호출합니다(끌어오기 1회당 3회 + 저장 시 압축본 1회, 토큰이 없으면 시간당 60회). 폴더 저장 테스트는 `page.addInitScript` 로 **가짜 폴더 선택창**(메모리)을 주입합니다 — 실제 OS 선택창은 Playwright 로 조작할 수 없어 실제 디스크 저장은 사람이 확인합니다. 한도가 찼거나 오프라인이면 `npx playwright test --grep-invert "@guardrail|@github"` 로 제외하세요.
 
 ## 화면
 
@@ -196,7 +196,11 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 |---|---|---|---|
 | GET | `/files` | `repoUrl`, `branch`(비우면 기본 브랜치) | `{ success, page: 1, total: 1, records, rows: [{ path, name, parentPath, type, size, depth, webUrl }], summary: { repoUrl, owner, repo, branch, defaultBranch, commitId, commitMessage, commitDate, truncated, entryCount } }` |
 
-실패해도 HTTP 200 으로 `{ success: false, message, page: 1, total: 0, records: 0, rows: [] }` 를 돌려줍니다. `type` 은 `DIR`·`FILE`·`SYMLINK`·`SUBMODULE`, `size` 는 파일만 값이 있습니다. 전체 트리를 한 번에 내리고 폴더 이동은 화면에서 처리합니다.
+| GET | `/archive` | `repoUrl`, `ref`(화면은 `summary.commitId`) | 항상 HTTP 200 `application/octet-stream` — 바이너리 프레임 스트림(아래) |
+
+`/files` 는 실패해도 HTTP 200 으로 `{ success: false, message, page: 1, total: 0, records: 0, rows: [] }` 를 돌려줍니다. `type` 은 `DIR`·`FILE`·`SYMLINK`·`SUBMODULE`, `size` 는 파일만 값이 있습니다. 전체 트리를 한 번에 내리고 폴더 이동은 화면에서 처리합니다.
+
+`/archive` 형식(빅엔디언, `str` = u32 길이 + UTF-8): `"GSRA" 0x01` 다음에 레코드가 이어집니다 — `F`(경로, u32 길이, 내용) · `S`(경로, 사유: 건너뜀) · `E`(메시지: 오류, 여기서 끝) · `Z`(u32 파일 수, u32 건너뜀 수, u64 총 바이트: 정상 종료). 입력 오류도 `E` 로 내립니다. 상세는 ADR 0007 결정 상세 10.
 
 ## 아키텍처 요약
 
@@ -253,7 +257,11 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 - 같은 `ScmClient` 추상화에 조회 메서드 `findTree`(기본 구현은 "지원하지 않음" 예외)를 더했습니다. GitHub 구현은 저장소 정보 → 브랜치 → Trees API(`recursive=1`) 3회 호출로 브랜치 최신 커밋의 전체 트리를 읽습니다. 서버에 clone 하지 않습니다.
 - `RepoBrowseService` 가 트리를 그리드 행으로 바꿉니다 — 같은 폴더 안에서 폴더 먼저·이름순, 서버 상한 2만 행(넘으면 `truncated`).
 - 화면은 전체 행을 받아 두고 폴더 진입·`..`·경로 링크 이동을 브라우저에서만 처리합니다(GitHub 재호출 없음). 파일을 누르면 커밋으로 고정된 GitHub 파일 페이지가 새 탭에서 열립니다.
-- 앱 DB 를 쓰지 않습니다. 서버 `GITHUB_TOKEN` 으로 조회하므로 토큰이 읽을 수 있는 비공개 저장소도 로그인 사용자 누구나 볼 수 있습니다.
+- **폴더 저장**: 끌어오기 클릭 직후(다른 비동기 작업보다 먼저) File System Access API(`showDirectoryPicker`)로 OS 폴더 선택창을 띄웁니다. 트리 조회 뒤 `GET /archive` 로 같은 커밋의 파일을 받아 브라우저가 `{선택 폴더}/{저장소명}/` 아래에 씁니다(`static/js/repo-archive.js`). 같은 이름 파일은 덮어쓰고, 저장소에 없는 로컬 파일은 지우지 않습니다. 서버는 GitHub zipball 을 1회 받아 메모리에서 풀고(상한 50 MiB, 아카이브 전용 타임아웃 50초) 프레임으로 흘려보내며 디스크에 쓰지 않습니다.
+- **덮어쓰기 확인**: 고른 폴더에 저장소 이름과 같은 폴더가 **대소문자 무시**로 이미 있고 비어 있지 않으면 먼저 확인받습니다. 안에 `.git` 이 있으면 Git 작업 폴더라는 경고를 덧붙입니다 — macOS·Windows 에서는 `guiSample` 이 기존 `GuiSample` 프로젝트 폴더로 열리기 때문입니다.
+- **보안 컨텍스트**: `showDirectoryPicker` 는 HTTPS·localhost 에서만 동작합니다. `http://mytechtest.jihun.com` 으로 쓸 때는 Chrome `chrome://flags/#unsafely-treat-insecure-origin-as-secure` 에 주소를 등록하세요. 없거나 Firefox·Safari 면 목록만 보이고 안내가 뜹니다.
+- 경로는 서버(`ScmPaths`)와 브라우저 양쪽에서 검사해 `..`·절대경로·빈 세그먼트·역슬래시·드라이브 표기를 거부합니다. 심볼릭 링크는 대상 경로를 담은 파일로, 서브모듈은 건너뜁니다.
+- 앱 DB 를 쓰지 않습니다. 서버 `GITHUB_TOKEN` 으로 조회하므로 토큰이 읽을 수 있는 비공개 저장소의 목록과 **파일 내용**을 로그인 사용자 누구나 받을 수 있습니다(의도적으로 허용).
 
 ### 데이터 계층
 

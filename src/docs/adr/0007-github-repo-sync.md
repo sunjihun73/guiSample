@@ -26,6 +26,8 @@
 
 2026-10-19 에 같은 인터페이스에 **조회 한 개(`findTree`)** 를 더해 **저장소끌어오기** 화면(브랜치 최신 커밋의 파일 목록을 GitHub 처럼 탐색)을 붙였다. 서버에 clone 하지 않고 API 로 트리만 읽으며, 앱 DB 를 쓰지 않는다(결정 상세 9).
 
+같은 날 후속으로 **조회 한 개(`readArchive`)** 를 더해, 끌어오기 때 고른 **브라우저 PC 폴더**의 `{저장소명}/` 아래에 그 커밋의 파일을 실제로 저장한다. 서버 디스크에는 쓰지 않는다(결정 상세 10).
+
 ## 구성 요소
 
 | 역할 | 파일 |
@@ -40,13 +42,14 @@
 | 동기화 규칙 | `service/RepoSyncService.java` |
 | 푸시 규칙 | `service/RepoPushService.java` |
 | 끌어오기(트리 → 그리드 행) | `service/RepoBrowseService.java` |
+| 끌어오기 파일 저장(아카이브 → 프레임 스트림) | `scm/ScmArchiveVisitor.java`, `scm/ScmPaths.java`, `service/RepoArchiveService.java`, `service/RepoArchiveFrameWriter.java`, `static/js/repo-archive.js` |
 | 응답 DTO | `dto/RepoSyncResult.java`, `dto/RepoPushResult.java`, `scm/ScmPushResult.java`, `dto/RepoFileRow.java`, `dto/RepoTreeSummary.java` |
-| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`, `pushRepository`), `controller/user/RepositoryRestController.java` (`GET /user/repository/files`) |
+| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`, `pushRepository`), `controller/user/RepositoryRestController.java` (`GET /user/repository/files`, `GET /user/repository/archive`) |
 | 매퍼 | `mapper/ProjectMasterMapper.java`, `resources/mapper/ProjectMasterMapper.xml` (`updateProjectFileNames`) |
 | 화면 | `views/user/projects.jsp` (`#btnRepoSync`, 수정 팝업의 `#btnPopupRepoPush`), `views/user/repositories.jsp` (저장소끌어오기, 사이드바 마지막 메뉴) |
 | 설정 | `application-local.yaml`, `application-e2e.yaml` 의 `scm:` 블록 |
-| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../service/RepoPushServiceTest.java`, `src/test/.../service/RepoBrowseServiceTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
-| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼, REPO PUSH 버튼), `e2e/specs/repositories.spec.ts` (저장소끌어오기, `@github` 2건은 실제 GitHub 호출) |
+| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../service/RepoPushServiceTest.java`, `src/test/.../service/RepoBrowseServiceTest.java`, `src/test/.../service/RepoArchiveServiceTest.java`, `src/test/.../service/RepoArchiveFrameWriterTest.java`, `src/test/.../scm/ScmPathsTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
+| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼, REPO PUSH 버튼), `e2e/specs/repositories.spec.ts` (저장소끌어오기·폴더 저장, `@github` 3건은 실제 GitHub 호출) |
 
 ## 전체 흐름
 
@@ -240,6 +243,34 @@ default ScmTree findTree(String repoUrl, String branch) {
 
 `summary`: `repoUrl, owner, repo, branch, defaultBranch, commitId, commitMessage, commitDate(ISO-8601 UTC), truncated, entryCount`.
 
+### 10. 끌어오기 결과를 브라우저 PC 폴더에 저장 (2026-10-19 후속)
+
+**끌어오기**를 누르면 폴더 선택창이 뜨고, 고른 폴더의 `{저장소명}/` 아래에 **그리드와 같은 커밋**의 파일을 저장한다. 같은 이름의 파일은 덮어쓰고, 저장소에 없는 로컬 파일은 지우지 않는다. 점검완료는 여전히 배치만이다.
+
+- **저장 위치는 브라우저 PC 다(사용자 결정).** File System Access API(`showDirectoryPicker({mode:'readwrite'})`, Chrome/Edge)로 OS 기본 폴더 선택창을 띄우고 브라우저가 직접 쓴다. 서버 디스크 쓰기안은 기각했다 — 서버가 원격(WAR)에 배포되면 사용자가 파일을 받을 수 없고, 로그인 사용자 누구나 서버 파일시스템을 탐색·쓰기하게 된다.
+- **보안 컨텍스트가 필요하다.** `showDirectoryPicker` 는 HTTPS·localhost 에서만 존재한다. 현재 접속 주소 `http://mytechtest.jihun.com` 에서는 Chrome 플래그 `chrome://flags/#unsafely-treat-insecure-origin-as-secure` 에 주소를 넣어야 한다(코드·인프라 변경 없음). 없으면 목록만 보이고 "미지원" 경고가 뜬다. 화면의 지원 판정은 함수 존재만 본다(`isSecureContext` 는 문구 구분용) — e2e 가 가짜 선택창을 끼울 수 있게 하기 위해서다.
+- **선택창을 가장 먼저 연다.** 브라우저는 클릭 직후 짧은 시간(일시적 사용자 활성화)에만 선택창을 허용하므로, 어떤 await·ajax·`appDialog` 보다 앞에서 동기 호출한다. 그 뒤 기존 `GET /files` 로 트리를 받고, 선택 결과에 따라 저장한다. 취소(`AbortError`)면 목록만 보이고 대화상자 없이 상태 줄에 "저장 안 함"을 남긴다.
+- **파일 내용은 GitHub 1회 호출로 받는다.** `ScmClient.readArchive(repoUrl, ref, visitor)`(`putFile`·`findTree` 와 같은 `default` 방식) — GitHub 구현은 `GET /repos/{o}/{r}/zipball/{ref}`(codeload 로 302)를 **메모리**로 받아(상한 50 MiB) `java.util.zip` 으로 풀고, 최상위 폴더(`owner-repo-sha/`)를 떼어 파일마다 visitor 에 넘긴다. `ref` 는 트리 응답의 `summary.commitId` 라 그리드와 저장 내용이 같은 커밋이다. 파일별 Contents API 는 호출 한도로, 브라우저 zip 해제는 테스트 없는 손수 만든 파서가 필요해 기각했다. 라이브러리는 양쪽 모두 추가하지 않았다.
+- **아카이브 전용 RestClient(읽기 타임아웃 50초).** `JdkClientHttpRequestFactory` 의 readTimeout 은 응답 본문 전체에 걸리므로 기존 20초 클라이언트로는 큰 압축본이 끊긴다. nginx 기본 60초보다 짧게 잡았다.
+- **응답은 단순 바이너리 프레임이다** — `GET /user/repository/archive?repoUrl=&ref=`, 항상 HTTP 200 `application/octet-stream`, `Cache-Control: no-store`. 빅엔디언, `str` = u32 길이 + UTF-8.
+
+  ```
+  stream := MAGIC record*        MAGIC = 'G' 'S' 'R' 'A' 0x01
+  'F' str path, u32 length, bytes     파일
+  'S' str path, str reason            건너뜀 (경로 규칙 위반 등)
+  'E' str message                     오류 — 여기서 끝
+  'Z' u32 files, u32 skipped, u64 totalBytes   정상 종료
+  ```
+
+  브라우저는 MAGIC 불일치·`E`·`Z` 없이 끝난 스트림·401/403(새로고침)을 실패로 본다. 컨트롤러는 예외를 밖으로 던지지 않고 입력 오류까지 `E` 로 내린다(`/files` 의 `success:false` 에 해당). 서버 상한은 파일 2만 개·파일당 100 MiB·합계 500 MiB(`RepoArchiveService`).
+- **경로 방어는 양쪽에 둔다.** 서버 `ScmPaths.safeRelativePath` 와 브라우저 `safeSegments` 가 `..`·`.`·빈 세그먼트·맨 앞 `/`·역슬래시·NUL·드라이브 표기(`C:`)를 거부한다. 심볼릭 링크는 대상 경로를 내용으로 하는 일반 파일로, 서브모듈·빈 폴더는 저장하지 않는다.
+- **기존 폴더면 덮어쓰기 전에 묻는다.** 고른 폴더에 저장소 이름과 같은 항목이 **대소문자 무시**로 이미 있고 비어 있지 않으면 `appDialog.confirm`(경고 톤, "덮어쓰기"/취소)을 띄운다. 실제 폴더 이름이 저장소 이름과 대소문자만 다르면 그 사실을, 안에 `.git` 이 있으면 "커밋하지 않은 변경이 사라진다"를 함께 알린다. 계기는 수동 확인 중의 사고다 — 프로젝트 상위 폴더(`~/DEV/IdeaProjects`)를 고르자 macOS(대소문자 무시)에서 `guiSample/` 이 작업 중인 `GuiSample` 프로젝트로 열려 미커밋 변경이 커밋본으로 덮어써졌다.
+- **소유권 "해당 없음" 유지, 단 범위가 넓어진다.** 서버 `GITHUB_TOKEN` 으로 받으므로 토큰이 읽는 비공개 저장소의 **파일 내용**까지 로그인 사용자 누구나 내려받을 수 있다(결정 상세 9 의 목록 허용과 같은 판단으로 사용자 확인 후 허용).
+
+| 메서드 | 경로 | 응답 |
+|---|---|---|
+| GET | `/user/repository/archive?repoUrl=&ref=` | 항상 200 `application/octet-stream` — 위 프레임 형식 |
+
 ## 실측 근거
 
 2026-10-13 로컬 환경(토큰 없음, 공개 저장소)에서 확인했다.
@@ -273,6 +304,17 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 | 화면 회귀 | `e2e/specs/repositories.spec.ts` + `workflow`·`projects` 스펙 | 27건 통과(`@github` 2건 포함) |
 | 변환·정렬·URI | `./gradlew test` — `RepoBrowseServiceTest` 9건, `GitHubScmClientTest` 추가 7건 | 전체 33건 통과 |
 
+끌어오기 폴더 저장은 2026-10-19 에 같은 저장소(`main` = `8a63fb2`)로 확인했다.
+
+| 확인 항목 | 방법 | 결과 |
+|---|---|---|
+| 압축본 크기 | zipball 직접 호출 | zip 2.0 MB, 풀면 7.7 MB, 파일 380 + 폴더 116, 최상위 폴더 1개 |
+| 서버 프레임 | 앱 경유 내려받기 로그 | `files=380 skipped=0 bytes=7764256`, 0.6~1.8초 |
+| 실제 PC 폴더 저장 | Chrome(보안 컨텍스트 플래그)에서 폴더 선택 → 저장 | 380개 전부 생성. 379개가 커밋 blob 과 SHA-1 일치, `gradlew.bat` 은 `.gitattributes`(`*.bat eol=crlf`)대로 CRLF — git checkout 결과와 바이트 동일 |
+| 프레임 3곳 일치 | Java writer ↔ JS 파서 ↔ e2e 가짜 응답, 청크 1/3/7/100000 바이트 | 정상·`E`·잘린 스트림 모두 기대대로 |
+| 화면 회귀 | `e2e/specs/repositories.spec.ts`(가짜 선택창 주입) | 15건 통과(신규 9건, `@github` 3건 포함) |
+| 단위 | `./gradlew test` | `ScmPathsTest`·`RepoArchiveFrameWriterTest`·`RepoArchiveServiceTest` 신규, `GitHubScmClientTest` 7건 추가 — 전체 통과 |
+
 실측용 임시 프로젝트 행은 확인 뒤 삭제했다(남겨 두면 e2e 실행마다 GitHub 를 호출한다).
 
 ## 결과(Consequences)
@@ -293,7 +335,10 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 - 기본 브랜치만 보므로 병합 전 커밋은 반영되지 않는다.
 - 토큰 없이 호출하면 **시간당 60회**(IP 기준) 한도다. 저장소당 목록 1~10회 + 일치 커밋 수만큼 상세 호출이 들어가므로 프로젝트가 많으면 금방 찬다. 저장소끌어오기도 1회당 3회를 같은 한도에서 쓴다.
 - **저장소끌어오기는 서버 토큰으로 조회한다.** 토큰이 읽을 수 있는 비공개 저장소의 파일 목록을 로그인한 사용자 누구나 볼 수 있다. 막으려면 `findTree` 의 저장소 정보 조회 결과가 `private` 일 때 거부하면 된다.
-- **저장소끌어오기 e2e 의 `@github` 2건은 실제 GitHub 를 호출한다.** 한도가 차거나 오프라인이면 실패하므로 `--grep-invert "@guardrail|@github"` 로 뺄 수 있다.
+- **폴더 저장은 Chrome/Edge + 보안 컨텍스트에서만 된다.** Firefox·Safari 와 http 주소(플래그 없음)에서는 목록만 보인다. 실제 OS 선택창은 Playwright 로 조작할 수 없어 e2e 는 가짜 선택창으로 대신하고, 실제 저장은 사람이 확인한다.
+- **아카이브 요청은 메모리를 많이 쓴다.** 요청 하나가 압축본(최대 50 MiB)과 파일 하나(최대 100 MiB)를 메모리에 들고, 다운로드·브라우저 쓰기 동안 요청 스레드를 점유한다. 동시 사용이 늘면 다시 볼 것.
+- **저장소에서 지워진 파일은 로컬에서 지워지지 않는다.** 동기화가 아니라 덮어쓰기다.
+- **저장소끌어오기 e2e 의 `@github` 3건은 실제 GitHub 를 호출한다.** 한도가 차거나 오프라인이면 실패하므로 `--grep-invert "@guardrail|@github"` 로 뺄 수 있다.
 
 ## 운영 주의
 
@@ -332,6 +377,7 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 | 2026-10-13 | 사용자 이름(소유자) 조건 제거 — 전체 프로젝트 대상, `update_user_id` 는 실행자 기록 |
 | 2026-10-14 | REPO PUSH 추가 — `ScmClient.putFile`(default), GitHub Contents API, `src/docs/{project_id}.txt`, 소유권 규칙 적용 |
 | 2026-10-19 | 저장소끌어오기 추가 — `ScmClient.findTree`(default), GitHub 3회 호출(저장소·브랜치·Trees recursive), 폴더 탐색형 그리드, DB 미사용, 점검완료는 배치만 |
+| 2026-10-19 | 끌어오기 폴더 저장 추가(결정 상세 10) — `ScmClient.readArchive`(default)·zipball, `GET /user/repository/archive` 바이너리 프레임, File System Access API 로 브라우저 PC 폴더 `{저장소명}/` 에 덮어쓰기 저장, 기존 비어 있지 않은 폴더(대소문자 무시)는 확인 후 저장 |
 
 ## 관련 문서
 

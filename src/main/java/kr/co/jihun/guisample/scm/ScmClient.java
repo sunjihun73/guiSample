@@ -1,12 +1,13 @@
 package kr.co.jihun.guisample.scm;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 
 /**
  * 소스 저장소(SCM) 조회 계약.
  *
- * <p>REPO동기화·REPO PUSH·저장소끌어오기는 이 인터페이스만 보고 동작한다. 저장소 종류(GitHub, GitLab, SVN …)를 늘릴 때는
+ * <p>REPO동기화·REPO PUSH·저장소끌어오기(목록·PC 폴더 저장)는 이 인터페이스만 보고 동작한다. 저장소 종류(GitHub, GitLab, SVN …)를 늘릴 때는
  * 구현체를 하나 더 빈으로 등록하면 되고, {@link ScmClientResolver} 가 {@link #supports} 로 골라 쓴다.
  * 동기화 로직({@code RepoSyncService})은 고칠 필요가 없다.
  *
@@ -53,5 +54,19 @@ public interface ScmClient
     default ScmTree findTree(String repoUrl, String branch)
     {
         throw new ScmException("이 저장소는 파일 목록 조회를 지원하지 않습니다: " + repoUrl);
+    }
+
+    /**
+     * 커밋(또는 브랜치) 시점의 파일 전체를 하나씩 visitor 에 넘긴다 (저장소끌어오기 저장 — 브라우저 PC 폴더로 내려받기).
+     *
+     * <p>경로는 저장소 루트 기준 상대경로이며 {@link ScmPaths#safeRelativePath} 를 통과한 것만
+     * {@link ScmArchiveVisitor#onFile} 로 온다. 구현은 서버 디스크에 쓰지 않는다.
+     * {@link #putFile} 과 같은 이유로 {@code default} 다 — 구현하지 않은 저장소는 {@link ScmException}.
+     *
+     * @param ref 커밋 SHA 또는 브랜치명 (화면은 트리 조회 응답의 커밋 SHA 를 보낸다)
+     */
+    default void readArchive(String repoUrl, String ref, ScmArchiveVisitor visitor) throws IOException
+    {
+        throw new ScmException("이 저장소는 파일 내려받기를 지원하지 않습니다: " + repoUrl);
     }
 }

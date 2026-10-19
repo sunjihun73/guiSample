@@ -39,3 +39,17 @@ BLOCKER 0 / MAJOR 0 / MINOR 2. 두 팀원 모두 검증을 마쳤다.
 
 ### 결론
 BLOCKER 0 / MAJOR 0 / MINOR 0 (미해결 없음). 남은 것은 e2e 실행(Phase 3)뿐이다.
+
+---
+## 2026-10-19 후속 1 — 폴더 저장 (qa 핸드백 내용을 메인이 기록)
+
+결론: BLOCKER 0 / MAJOR 0 / MINOR 2. 체크포인트 1~7 통과(바이트 프레임 Java writer ↔ JS reader ↔ e2e buildFrames 바이트 일치 실행 확인, picker 첫 await 전 호출, isSupported 함수 존재만 검사, 기존 id/class 추가만, 경로 방어 이중화, 컨트롤러 예외 미전파, archiveClient 50초 분리).
+
+- [MINOR] 1 — repo-archive.js 미로드 시 'unsupported' 분기에서 ReferenceError → 버튼 disabled 고착. → **메인이 수정**(`window.repoArchive` 존재 확인 후 대체 문구).
+- [MINOR] 2 — 드라이브 표기(C:) 거부가 서버에만 있음. → **메인이 수정**(repo-archive.js `safeSegments` 첫 세그먼트 `/^[A-Za-z]:/` 거부).
+
+참고: 요청당 메모리 최대 약 150 MiB·요청 스레드 점유(설계상 감수), archive 컨트롤러 예외 미전파 단위 테스트 없음(코드 리딩 확인).
+
+### 사고 기록 (수동 완료판정 중)
+사용자가 폴더로 `~/DEV/IdeaProjects` 를 골라 `{폴더}/guiSample` 이 macOS(대소문자 무시) 에서 **작업 중인 프로젝트 `GuiSample` 자체**로 해석됐다. 커밋 8a63fb2 파일이 미커밋 변경을 덮어씀. 탭을 닫아 중단, 에이전트 기록의 편집 명령을 HEAD 위에 재생해 복구(diff stat 사고 전과 동일 확인).
+→ 재발 방지: 저장 대상 `{저장소명}` 폴더가 이미 있고 비어 있지 않으면 appDialog 확인 후에만 덮어쓴다.

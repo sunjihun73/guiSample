@@ -1987,3 +1987,13 @@ body {
 .repo-file__icon { width: 16px; height: 16px; flex-shrink: 0; }
 .repo-file__icon--dir { color: hsl(var(--primary) / 0.75); }
 .repo-file__icon--file { color: hsl(var(--muted-foreground)); }
+
+/* 폴더 저장 결과 한 줄 (#repoSaveStatus) — 끌어오기 후 표시, 실패·미지원은 --error */
+.repo-save-status {
+    display: block;
+    margin: calc(var(--sp-xs) * -1) 0 var(--sp-sm);
+    font-size: 13px;
+    color: hsl(var(--success));
+}
+.repo-save-status[hidden] { display: none; }
+.repo-save-status--error { color: hsl(var(--destructive)); }

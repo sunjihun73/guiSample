@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun   # e2e 프로파일로 기동
 ```
 
-`./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱·저장소끌어오기 트리 변환 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
+`./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱·저장소끌어오기 트리 변환·압축본 해제·경로 방어·프레임 형식 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
 
 Java 툴체인은 **21** (`build.gradle`).
 
@@ -31,7 +31,7 @@ npm run test:ui / npm run report
 
 Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 직접 의존한다(`chat.spec.ts` 상단 주석에 목록). **JSP 의 id/class 를 바꾸면 e2e 가 깨진다.**
 
-스펙: `auth` / `projects` / `chat` / `hybrid-search` / `workflow`(스텝1~3·종료 수명주기) / `repositories`(저장소끌어오기 — `@github` 태그 2건은 **실제 GitHub API 를 호출**하므로 한도 소진·오프라인 시 `--grep-invert "@guardrail|@github"` 로 뺀다). 워크플로우 화면은 기본 대화상자를 쓰지 않으므로 Playwright 의 `dialog` 이벤트가 아니라 **`#appDialog` 팝업의 버튼을 클릭**해야 진행된다. 스펙은 기본 대화상자가 뜨면 실패하도록 `afterEach` 에서 감시한다.
+스펙: `auth` / `projects` / `chat` / `hybrid-search` / `workflow`(스텝1~3·종료 수명주기) / `repositories`(저장소끌어오기·폴더 저장 — 폴더 저장은 `page.addInitScript` 로 **가짜 `showDirectoryPicker`**(메모리 핸들, 기본 `abort`)를 주입해 검증한다. `@github` 태그 3건은 **실제 GitHub API 를 호출**하므로 한도 소진·오프라인 시 `--grep-invert "@guardrail|@github"` 로 뺀다). 워크플로우 화면은 기본 대화상자를 쓰지 않으므로 Playwright 의 `dialog` 이벤트가 아니라 **`#appDialog` 팝업의 버튼을 클릭**해야 진행된다. 스펙은 기본 대화상자가 뜨면 실패하도록 `afterEach` 에서 감시한다.
 
 ## 설정 · 프로파일
 
@@ -94,6 +94,15 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 몇 개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
 - 외부 HTTP 를 기다리는 동안 커넥션을 잡지 않도록 트랜잭션 없이 프로젝트 단위로 UPDATE 한다. 저장소 하나가 실패해도 나머지는 진행되고, 실패는 결과 항목 `FAILED` 로 돌아온다.
 - **저장소끌어오기** (좌측 메뉴 마지막, `/user/repositories` → `user/repositories.jsp`) → `GET /user/repository/files?repoUrl=&branch=` → `RepoBrowseService` → `ScmClient.findTree`(**default 메서드**, `putFile` 과 같은 방식). 서버에 clone 하지 않고 GitHub API 3회(저장소 → 브랜치 → Trees `recursive=1`)로 **브랜치 최신 커밋의 파일 트리**만 읽는다. 브랜치명이 비면 기본 브랜치, 브랜치명도 `pathSegment` 로 쪼갠다(슬래시 브랜치 지원, `.`/`..` 거부). 전체 행을 한 번에 내리고(jqGrid shape, `page=1,total=1`, 서버 상한 2만 행 → `truncated`) **폴더 이동은 화면에서만** 처리해 GitHub 를 다시 부르지 않는다. 모든 실패는 HTTP 200 `success:false` + `message`. 앱 DB 를 쓰지 않아 **소유권 "해당 없음"** — 단 서버 `GITHUB_TOKEN` 으로 조회하므로 토큰이 읽는 비공개 저장소 목록을 로그인 사용자 누구나 볼 수 있다(의도적으로 허용). **점검완료 버튼은 배치만** 돼 있고 동작이 없다(ADR 0007 결정 상세 9).
+- **끌어오기 폴더 저장** (ADR 0007 결정 상세 10): 끌어오기 클릭 → **브라우저 PC 폴더**를 File System Access API(`showDirectoryPicker`)로 고르고 `{선택 폴더}/{저장소명}/` 아래에 덮어쓰기 저장(저장소에 없는 로컬 파일은 지우지 않음). **서버 디스크에는 쓰지 않는다.**
+  - **선택창은 클릭 핸들러에서 어떤 await·ajax·`appDialog` 보다 먼저 동기 호출**해야 한다(일시적 사용자 활성화 — 늦으면 `SecurityError`). 그다음 `GET /files` → `GET /user/repository/archive?repoUrl=&ref={summary.commitId}` 순서라 그리드와 저장 내용이 같은 커밋이다.
+  - `ScmClient.readArchive`(**default 메서드**, `putFile`·`findTree` 와 같은 방식). GitHub 은 zipball 1회를 **메모리**로 받아(50 MiB) `java.util.zip` 으로 풀고 최상위 폴더를 뗀다. 압축본은 **아카이브 전용 RestClient(읽기 타임아웃 50초)** 로 받는다 — `JdkClientHttpRequestFactory` 의 readTimeout 이 본문 전체에 걸려 기존 20초 클라이언트로는 끊긴다.
+  - `/archive` 응답은 **항상 200 `application/octet-stream` 바이너리 프레임**(`GSRA`+0x01, 레코드 `F`/`S`/`E`/`Z`, 빅엔디언). 형식은 `RepoArchiveFrameWriter`(Java) · `repo-archive.js`(파서) · `repositories.spec.ts` 의 `buildFrames`(e2e 가짜 응답) **세 곳이 같아야 한다 — 하나를 바꾸면 셋 다 고칠 것.** 컨트롤러는 예외를 밖으로 던지지 않고 입력 오류까지 `E` 로 내린다.
+  - 경로 방어는 서버 `ScmPaths.safeRelativePath` 와 브라우저 `safeSegments` **양쪽**에 둔다(`..`·`.`·빈 세그먼트·맨 앞 `/`·역슬래시·NUL·`C:`).
+  - 고른 폴더에 저장소 이름과 같은 항목이 **대소문자 무시**로 이미 있고 비어 있지 않으면 `appDialog.confirm`(덮어쓰기/취소) 후에만 저장한다(`.git` 이 있으면 경고 추가). macOS 에서 `guiSample/` 이 작업 중인 `GuiSample` 프로젝트로 열려 미커밋 변경을 덮어쓴 사고가 계기다. **수동 확인은 반드시 전용 빈 폴더(예: `~/Downloads/pulltest`)로 한다 — 이 프로젝트의 상위 폴더를 고르지 말 것.**
+  - `showDirectoryPicker` 는 HTTPS·localhost 전용이다. `http://mytechtest.jihun.com` 에서는 Chrome `chrome://flags/#unsafely-treat-insecure-origin-as-secure` 등록이 필요하고, 화면의 지원 판정은 **함수 존재만** 본다(e2e 가짜 주입을 위해 `isSecureContext` 를 조건에 넣지 말 것). 실제 OS 선택창은 Playwright 로 조작할 수 없으므로 실제 디스크 저장은 사람이 확인한다.
+  - 비공개 저장소의 **파일 내용**도 서버 토큰으로 로그인 사용자 누구나 받을 수 있다(의도적으로 허용).
+  - `bootRun` 은 정적 파일을 `build/resources` 에서 서빙한다 — JS 를 고친 직후 e2e 를 돌리면 옛 JS 로 실패할 수 있으니 복사(IDE 빌드·DevTools 재시작)를 확인하고 돌릴 것.
 
 ### 프론트 규약 (JSP)
 
@@ -115,10 +124,10 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 
 ## 문서
 
-- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화·REPO PUSH·저장소끌어오기(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화·PUSH·저장소끌어오기 흐름을 바꾸기 전에 읽을 것.**
+- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화·REPO PUSH·저장소끌어오기·폴더 저장(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화·PUSH·저장소끌어오기 흐름을 바꾸기 전에 읽을 것.**
 - `src/docs/measurements.md` — 검색 품질·비용 실측 이력. **임베딩 모델이나 검색 임계값을 바꾸기 전에 읽고, 바꾼 뒤에는 같은 형식으로 추가할 것.**
 - `_workspace/00_architect_design.md` — 채팅 세션 기능(chat_master/chat_detail) 상세 설계. 나머지 `_workspace/*` 는 하위 에이전트 작업 요약, `_workspace_prev_*` 는 이전 회차 보관본.
-- `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준, 2026-10-19 저장소끌어오기 반영). 기능·API 를 바꾸면 함께 고칠 것.
+- `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준, 2026-10-19 저장소끌어오기·폴더 저장 반영). 기능·API 를 바꾸면 함께 고칠 것.
 - `DESIGN.md` — 앱 아키텍처가 아니라 UI 디자인 토큰(Apple 스타일) 스펙이다.
 
 ## 하네스: guiSample 기능 개발
@@ -138,3 +147,4 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 | 2026-10-14 | REPO PUSH(프로젝트 설명 → 저장소 `src/docs/{project_id}.txt`) 추가 | 프로젝트 팝업·scm(`putFile`)·src/test·e2e | 설계 근거 ADR 0007 결정 상세 8 |
 | 2026-10-19 | 하네스 점검 반영: 오케스트레이터 v2 전환(TeamCreate 제거 → `Agent(name:)`+`SendMessage`, Phase 3 에 `test`·e2e·MyBatis 통과 확인 추가), 범위를 RAG 외 기능까지 확장하며 `rag-feature-orchestrator`→`feature-orchestrator`·`rag-architect`→`feature-architect`·`spring-ai-rag-design`→`feature-design` 개명, 에이전트·스킬을 실제 컨벤션(dto 패키지, jqGrid·jQuery, `RagContextAdvisor`, `db/*.sql` 수동 적용, common.css 단일)과 규칙(소유권·`LoginUserSession`·매퍼 주석 `#{}`·appDialog·SSE·e2e 셀렉터)에 맞춤, QA 경계면 5→7, 모델 선택 근거 주석 | `.claude/agents` 전체·`.claude/skills` 전체 | 5월 구성 이후 코드와 하네스 불일치 누적, v1 도구 미동작 |
 | 2026-10-19 | 저장소끌어오기 화면(`repositories.jsp`, 사이드바 마지막 메뉴) 추가 — `ScmClient.findTree`(default)·GitHub Trees API, 폴더 탐색형 그리드, DB 미사용, 점검완료는 배치만 | 사이드바·scm·src/test·e2e(`repositories`) | 설계 근거 ADR 0007 결정 상세 9 |
+| 2026-10-19 | 저장소끌어오기 폴더 저장 — 브라우저 PC 폴더(File System Access API)에 `{저장소명}/` 덮어쓰기 저장, `ScmClient.readArchive`(default)·zipball, `GET /user/repository/archive` 바이너리 프레임, 기존 폴더(대소문자 무시) 덮어쓰기 확인 | scm·service·controller·`repo-archive.js`·`repositories.jsp`·src/test·e2e(`repositories`) | 설계 근거 ADR 0007 결정 상세 10. 수동 확인 중 프로젝트 자체 덮어쓰기 사고 → 확인 대화상자 추가 |
