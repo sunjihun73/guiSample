@@ -11,6 +11,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
 | **프로젝트 관리** | 프로젝트 목록 조회(검색·페이징), 등록·수정·삭제 팝업. 요청 ID(`req_id`)·저장소 URL(`repo_url`)·파일명(`file_names`) 입력, TinyMCE 설명 에디터 |
 | **REPO동기화** | 프로젝트의 GitHub 저장소에서 최근 30일 커밋을 읽어, 커밋 메시지의 `{요청ID}` 가 `req_id` 와 일치하는 커밋의 변경 파일로 `file_names` 를 채웁니다. 저장소 종류는 확장 가능하게 추상화되어 있습니다(SVN 등). |
 | **REPO PUSH** | 프로젝트 수정 팝업의 **REPO PUSH** 버튼으로 저장된 프로젝트 설명(HTML)을 저장소의 `src/docs/{project_id}.txt` 로 커밋합니다. 커밋 메시지는 `프로젝트 설명 yyyy-MM-dd`. |
+| **저장소끌어오기** | 저장소 URL·브랜치명을 넣고 **끌어오기**를 누르면 그 브랜치 최신 커밋의 파일 목록을 GitHub 처럼 폴더 탐색형 그리드로 보여 줍니다(서버에 clone 하지 않고 API 로 트리만 조회). 점검완료 버튼은 아직 동작이 없습니다. |
 | **지식베이스 색인** | 카테고리 등록 → 텍스트 파일 업로드 → 800토큰 청킹 → 임베딩 → pgvector 적재. 업로드한 파일·청크 목록 조회 |
 | **RAG 챗봇** | dense(pgvector) + BM25 키워드 검색을 RRF 로 융합한 하이브리드 검색, 카테고리 한정 검색, SSE 토큰 스트리밍, 대화 세션·메시지(토큰 사용량 포함) 저장 |
 | **가드레일** | 모든 LLM 호출은 LiteLLM 프록시를 거치며, 가드레일에 차단되면 오류 대신 "안전 정책에 따라 답변할 수 없습니다" 안내 문구로 응답합니다. |
@@ -43,7 +44,7 @@ Keycloak SSO 로 로그인한 사용자가 프로젝트를 관리하고, 문서�
                                                   ├─► flowable-db   (localhost:5433)  워크플로우 엔진 DB
                                                   ├─► Keycloak      (keycloak.jihun.com)  SSO
                                                   ├─► LiteLLM       (litellm.jihun.com)   OpenAI 프록시 · 가드레일
-                                                  └─► GitHub API    (api.github.com)      REPO동기화·REPO PUSH
+                                                  └─► GitHub API    (api.github.com)      REPO동기화·REPO PUSH·저장소끌어오기
 ```
 
 `/etc/hosts` 에 도메인을 등록합니다.
@@ -86,7 +87,7 @@ UPLOAD_FILE_PATH=          # 지식파일 업로드 저장 경로
 FLOWABLE_DB_PASSWORD=      # 워크플로우 전용 DB 비밀번호
 PGVECTOR_USERNAME=         # 앱 DB 계정
 PGVECTOR_PASSWORD=
-GITHUB_TOKEN=              # REPO동기화는 선택(없으면 공개 저장소만·시간당 60회), REPO PUSH는 필수(contents:write)
+GITHUB_TOKEN=              # REPO동기화·저장소끌어오기는 선택(없으면 공개 저장소만·시간당 60회), REPO PUSH는 필수(contents:write)
 ```
 
 ## 빌드 & 실행
@@ -107,8 +108,8 @@ SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun     # e2e 프로파일로 실행
 
 | 종류 | 위치 | 실행 | 범위 |
 |---|---|---|---|
-| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, REPO PUSH 경로·커밋 메시지·거부 조건, GitHub URL 파싱 (스프링 컨텍스트·DB·네트워크 없음) |
-| E2E | `e2e/` (별도 npm 프로젝트) | `cd e2e && npm test` | 로그인, 프로젝트, 채팅, 하이브리드 검색, 워크플로우 |
+| 단위 테스트 | `src/test` | `./gradlew test` | REPO동기화 매칭·갱신 규칙, REPO PUSH 경로·커밋 메시지·거부 조건, GitHub URL 파싱, 저장소끌어오기 트리 변환·정렬·브랜치 URI (스프링 컨텍스트·DB·네트워크 없음) |
+| E2E | `e2e/` (별도 npm 프로젝트) | `cd e2e && npm test` | 로그인, 프로젝트, 채팅, 하이브리드 검색, 워크플로우, 저장소끌어오기 |
 
 E2E 는 앱과 외부 구성요소가 모두 떠 있어야 합니다. 누락 시 `setup/preflight.ts` 가 무엇을 띄워야 하는지 알려 주고 중단합니다. 최초 설정과 자주 막히는 지점은 [`e2e/README.md`](e2e/README.md) 를 참고하세요.
 
@@ -121,6 +122,8 @@ npm run report                           # 리포트 보기
 ```
 
 Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, 화면 요소의 id/class 를 바꾸면 E2E 가 깨집니다.
+
+저장소끌어오기 스펙의 `@github` 태그 2건은 실제 GitHub API 를 호출합니다(끌어오기 1회당 3회, 토큰이 없으면 시간당 60회). 한도가 찼거나 오프라인이면 `npx playwright test --grep-invert "@guardrail|@github"` 로 제외하세요.
 
 ## 화면
 
@@ -135,10 +138,11 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 | `/user/embedding` | embedding.jsp | 카테고리 관리, 지식파일 업로드·목록, 청크 조회 |
 | `/user/workflow/step1` ~ `step3` | workflow/step1~3.jsp | 단계별 태스크 목록·생성·완료 |
 | `/user/workflow/ends` | workflow/ends.jsp | 종료된 태스크 조회 |
+| `/user/repositories` | repositories.jsp | 저장소끌어오기 — 저장소 URL·브랜치의 파일 목록을 폴더 탐색형 그리드로 조회 (좌측 메뉴 마지막) |
 
 ## REST API
 
-목록 응답은 jqGrid 형식 `{ page, total, records, rows[] }` 를 따릅니다. 조회 결과는 모두 **로그인 사용자 소유 데이터로 제한**됩니다(예외: REPO동기화).
+목록 응답은 jqGrid 형식 `{ page, total, records, rows[] }` 를 따릅니다. 조회 결과는 모두 **로그인 사용자 소유 데이터로 제한**됩니다(예외: REPO동기화. 저장소끌어오기는 앱 DB 를 쓰지 않습니다).
 
 ### 프로젝트 — `ProjectMasterRestController` (`/user/project`)
 
@@ -185,6 +189,14 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 | POST | `/tasks/{flowableTaskId}/complete` | `{ step }` | `{ success, nextStep, finished }` |
 
 완료 요청에는 화면의 단계(`step`)를 함께 보냅니다. 이미 다음 단계로 넘어간 태스크를 오래된 화면에서 다시 완료하려 하면 서버가 거부합니다.
+
+### 저장소끌어오기 — `RepositoryRestController` (`/user/repository`)
+
+| Method | Path | 요청 | 응답 |
+|---|---|---|---|
+| GET | `/files` | `repoUrl`, `branch`(비우면 기본 브랜치) | `{ success, page: 1, total: 1, records, rows: [{ path, name, parentPath, type, size, depth, webUrl }], summary: { repoUrl, owner, repo, branch, defaultBranch, commitId, commitMessage, commitDate, truncated, entryCount } }` |
+
+실패해도 HTTP 200 으로 `{ success: false, message, page: 1, total: 0, records: 0, rows: [] }` 를 돌려줍니다. `type` 은 `DIR`·`FILE`·`SYMLINK`·`SUBMODULE`, `size` 는 파일만 값이 있습니다. 전체 트리를 한 번에 내리고 폴더 이동은 화면에서 처리합니다.
 
 ## 아키텍처 요약
 
@@ -236,6 +248,13 @@ Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 의존하므로, �
 - REPO동기화와 달리 **소유권 규칙을 그대로 따릅니다**(팝업에서 한 건씩 실행). 설명·저장소 URL 이 비어 있으면 거부합니다 — 빈 파일로 기존 문서를 덮지 않기 위함입니다.
 - `GITHUB_TOKEN` 에 **contents:write** 권한이 필요합니다(읽기 전용 토큰이면 403).
 
+### 저장소끌어오기
+
+- 같은 `ScmClient` 추상화에 조회 메서드 `findTree`(기본 구현은 "지원하지 않음" 예외)를 더했습니다. GitHub 구현은 저장소 정보 → 브랜치 → Trees API(`recursive=1`) 3회 호출로 브랜치 최신 커밋의 전체 트리를 읽습니다. 서버에 clone 하지 않습니다.
+- `RepoBrowseService` 가 트리를 그리드 행으로 바꿉니다 — 같은 폴더 안에서 폴더 먼저·이름순, 서버 상한 2만 행(넘으면 `truncated`).
+- 화면은 전체 행을 받아 두고 폴더 진입·`..`·경로 링크 이동을 브라우저에서만 처리합니다(GitHub 재호출 없음). 파일을 누르면 커밋으로 고정된 GitHub 파일 페이지가 새 탭에서 열립니다.
+- 앱 DB 를 쓰지 않습니다. 서버 `GITHUB_TOKEN` 으로 조회하므로 토큰이 읽을 수 있는 비공개 저장소도 로그인 사용자 누구나 볼 수 있습니다.
+
 ### 데이터 계층
 
 - `DataSourceConfig` 가 `HikariDataSource` 를 직접 선언하므로 Boot 의 DataSource/MyBatis 자동구성이 꺼집니다. `SqlSessionFactory` 를 직접 구성합니다(언더스코어→카멜케이스, `dto` 타입 별칭, `classpath:mapper/**/*.xml`). Spring AI pgvector 와 MyBatis 가 이 DataSource 하나를 공유합니다.
@@ -250,13 +269,13 @@ src/main/java/kr/co/jihun/guisample/
 ├── advisor/                           # RagContextAdvisor(RAG 컨텍스트 주입), RagRetrievalSettings
 ├── config/                            # DataSource, Flowable, Security, SpringAi(ChatClient·검색 파라미터)
 ├── controller/                        # HomeController(랜딩)
-│   └── user/                          # MainController(화면), Project·AI·Category·Knowledge·Workflow REST
+│   └── user/                          # MainController(화면), Project·AI·Category·Knowledge·Workflow·Repository REST
 ├── dto/                               # 요청·응답·도메인 DTO
 ├── filter/                            # KeycloakUserProvisioningFilter
 ├── mapper/                            # MyBatis 매퍼 인터페이스
-├── scm/                               # ScmClient 추상화 (REPO동기화·REPO PUSH)
+├── scm/                               # ScmClient 추상화 (REPO동기화·REPO PUSH·저장소끌어오기)
 │   └── github/                        # GitHub 구현 + 설정
-├── service/                           # 비즈니스 로직 (AI·임베딩·하이브리드 검색·채팅·워크플로우·REPO동기화 등)
+├── service/                           # 비즈니스 로직 (AI·임베딩·하이브리드 검색·채팅·워크플로우·REPO동기화·저장소끌어오기 등)
 └── session/                           # LoginUserSession
 src/main/resources/
 ├── application.yaml                   # 프로파일 선택만
@@ -280,7 +299,7 @@ e2e/                                   # Playwright E2E (별도 npm 프로젝트
 - 좌측 메뉴는 `views/common/sidebar.jsp` 한 곳에만 있고, 각 화면이 정적 include 로 끼웁니다.
 - CSRF 토큰은 `static/js/csrf.js` 가 jQuery ajax 에 자동 부착합니다.
 - JSP EL 은 자동 이스케이프가 없으므로 사용자 입력 문자열은 `HtmlUtils.htmlEscape` 로 직접 이스케이프합니다.
-- 워크플로우 화면과 프로젝트 목록 화면은 브라우저 기본 `alert()`/`confirm()` 대신 공통 레이어 팝업(`appDialog`, `views/common/dialog.jsp` + `static/js/dialog.js`)을 씁니다.
+- 워크플로우·프로젝트 목록·저장소끌어오기 화면은 브라우저 기본 `alert()`/`confirm()` 대신 공통 레이어 팝업(`appDialog`, `views/common/dialog.jsp` + `static/js/dialog.js`)을 씁니다.
 
 ## 문서
 
@@ -292,7 +311,7 @@ e2e/                                   # Playwright E2E (별도 npm 프로젝트
 | [`src/docs/adr/0004`](src/docs/adr/0004-sguard-cancel.md) | sguard 포기 근거 |
 | [`src/docs/adr/0005`](src/docs/adr/0005-hybrid-bm25-rrf.md) | 하이브리드 검색(BM25+RRF) · RAG 소유권 |
 | [`src/docs/adr/0006`](src/docs/adr/0006-flowable-workflow.md) | 워크플로우(Flowable · 전용 DB · 화면 구성) |
-| [`src/docs/adr/0007`](src/docs/adr/0007-github-repo-sync.md) | REPO동기화·REPO PUSH(ScmClient 추상화 · GitHub 구현) |
+| [`src/docs/adr/0007`](src/docs/adr/0007-github-repo-sync.md) | REPO동기화·REPO PUSH·저장소끌어오기(ScmClient 추상화 · GitHub 구현) |
 | [`src/docs/measurements.md`](src/docs/measurements.md) | 검색 품질 · 비용 실측 이력 |
 | [`e2e/README.md`](e2e/README.md) | E2E 환경 구성 · 문제 해결 |
 | [`DESIGN.md`](DESIGN.md) | UI 디자인 토큰 |

@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 SPRING_PROFILES_ACTIVE=e2e ./gradlew bootRun   # e2e 프로파일로 기동
 ```
 
-`./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
+`./gradlew test` 는 `src/test` 의 순수 단위 테스트(REPO동기화 매칭·GitHub URL 파싱·저장소끌어오기 트리 변환 — 스프링 컨텍스트·DB·네트워크 없음)만 돈다. **화면·DB 를 거치는 실제 테스트는 `e2e/` 의 Playwright 스위트**다 (아래 참조).
 
 Java 툴체인은 **21** (`build.gradle`).
 
@@ -31,7 +31,7 @@ npm run test:ui / npm run report
 
 Playwright 스펙은 JSP 의 실제 `id`/`class` 셀렉터에 직접 의존한다(`chat.spec.ts` 상단 주석에 목록). **JSP 의 id/class 를 바꾸면 e2e 가 깨진다.**
 
-스펙: `auth` / `projects` / `chat` / `hybrid-search` / `workflow`(스텝1~3·종료 수명주기). 워크플로우 화면은 기본 대화상자를 쓰지 않으므로 Playwright 의 `dialog` 이벤트가 아니라 **`#appDialog` 팝업의 버튼을 클릭**해야 진행된다. 스펙은 기본 대화상자가 뜨면 실패하도록 `afterEach` 에서 감시한다.
+스펙: `auth` / `projects` / `chat` / `hybrid-search` / `workflow`(스텝1~3·종료 수명주기) / `repositories`(저장소끌어오기 — `@github` 태그 2건은 **실제 GitHub API 를 호출**하므로 한도 소진·오프라인 시 `--grep-invert "@guardrail|@github"` 로 뺀다). 워크플로우 화면은 기본 대화상자를 쓰지 않으므로 Playwright 의 `dialog` 이벤트가 아니라 **`#appDialog` 팝업의 버튼을 클릭**해야 진행된다. 스펙은 기본 대화상자가 뜨면 실패하도록 `afterEach` 에서 감시한다.
 
 ## 설정 · 프로파일
 
@@ -84,7 +84,7 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - userTask id(`step1`/`step2`/`step3`)가 REST 의 `step` 파라미터·화면 파일명과 1:1 이다. **id 를 바꾸면 `WorkflowService.STEP_KEYS` 와 스텝 화면 3개를 함께 고쳐야 한다.**
 - 완료 요청은 태스크 id 와 함께 **화면의 단계(`step`)를 같이 보낸다** — 오래된 목록으로 이미 넘어간 태스크를 다시 완료하는 것을 서버가 거부한다.
 
-### REPO동기화 / REPO PUSH — 저장소 ↔ `project_master`
+### REPO동기화 / REPO PUSH / 저장소끌어오기 — 저장소 연동 (`ScmClient`)
 
 - 설계 근거는 **ADR 0007**.
 - 프로젝트 목록의 **REPO동기화** 버튼 → `POST /user/project/projects/repo-sync` → `RepoSyncService`. `repo_url`·`req_id` 가 모두 있는 **전체 프로젝트**가 대상이며(**데이터 소유권 규칙의 의도된 예외** — 대상 선정·UPDATE 모두 소유자/사용자 이름 조건 없음, `update_user_id` 에 실행자만 기록), 최근 `scm.sync.lookback-days`(30)일 커밋 메시지의 `{…}` 값이 `req_id` 와 **정확히 일치**하는 커밋들의 변경 파일 합집합(정렬·줄바꿈 구분)으로 `file_names` 를 **교체**한다. 일치 커밋이 없으면 기존 값을 그대로 둔다.
@@ -93,13 +93,14 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 - 쓰기는 `ScmClient.putFile` **default 메서드**다(기본 구현이 "지원하지 않음" 예외) — 조회만 하는 구현체가 깨지지 않게. GitHub 는 Contents API(GET 으로 blob sha 확인 → PUT, 기본 브랜치)로 구현한다. **경로는 URI 변수 하나로 넘기면 안 된다** — 슬래시가 `%2F` 로 인코딩돼 404 가 된다. `pathSegment` 로 쪼개 넣는다(`GitHubScmClient.contentsUri`, 회귀 테스트 있음).
 - GitHub 는 라이브러리 없이 Spring `RestClient` 로 호출한다(필요한 API 가 몇 개뿐이고, hub4j 는 Jackson 2·자체 HTTP 스택을 끌고 와 Boot 4 와 겹친다). 목록 API 에 파일이 없으므로 **req_id 가 일치한 커밋만** 상세를 읽는다.
 - 외부 HTTP 를 기다리는 동안 커넥션을 잡지 않도록 트랜잭션 없이 프로젝트 단위로 UPDATE 한다. 저장소 하나가 실패해도 나머지는 진행되고, 실패는 결과 항목 `FAILED` 로 돌아온다.
+- **저장소끌어오기** (좌측 메뉴 마지막, `/user/repositories` → `user/repositories.jsp`) → `GET /user/repository/files?repoUrl=&branch=` → `RepoBrowseService` → `ScmClient.findTree`(**default 메서드**, `putFile` 과 같은 방식). 서버에 clone 하지 않고 GitHub API 3회(저장소 → 브랜치 → Trees `recursive=1`)로 **브랜치 최신 커밋의 파일 트리**만 읽는다. 브랜치명이 비면 기본 브랜치, 브랜치명도 `pathSegment` 로 쪼갠다(슬래시 브랜치 지원, `.`/`..` 거부). 전체 행을 한 번에 내리고(jqGrid shape, `page=1,total=1`, 서버 상한 2만 행 → `truncated`) **폴더 이동은 화면에서만** 처리해 GitHub 를 다시 부르지 않는다. 모든 실패는 HTTP 200 `success:false` + `message`. 앱 DB 를 쓰지 않아 **소유권 "해당 없음"** — 단 서버 `GITHUB_TOKEN` 으로 조회하므로 토큰이 읽는 비공개 저장소 목록을 로그인 사용자 누구나 볼 수 있다(의도적으로 허용). **점검완료 버튼은 배치만** 돼 있고 동작이 없다(ADR 0007 결정 상세 9).
 
 ### 프론트 규약 (JSP)
 
 - 뷰는 `src/main/webapp/WEB-INF/views/`, 라우팅은 `MainController`(`/user/**`). 스타일은 `static/css/common.css` 단일 파일(화면별 인라인 스타일 금지).
 - 좌측 메뉴는 **`views/common/sidebar.jsp` 한 곳**에만 있다. 각 화면은 include 앞에 `String activeMenu` 를 선언하고 `<%@ include %>`(정적 include)로 끼운다. 런타임 `<jsp:include>` 는 `DispatcherType.INCLUDE` 를 일으키는데 `SecurityConfig` 는 FORWARD/ERROR 만 열어 두었으므로 쓰지 않는다. 조각 파일에는 **`<%@ page pageEncoding="UTF-8" %>` 가 반드시 있어야 한다** — 없으면 포함되는 파일이 ISO-8859-1 로 읽혀 메뉴 한글이 깨진다.
 - 알림·확인은 브라우저 기본 `alert()`/`confirm()` 대신 **`appDialog`**(마크업 `views/common/dialog.jsp`, 동작 `static/js/dialog.js`)를 쓴다. 화면은 조각을 정적 include 하고 `dialog.js` 를 `workflow.js` 보다 먼저 읽는다. **기본 대화상자와 달리 스크립트를 멈추지 않으므로** 확인 결과는 `onConfirm`/`onCancel` 콜백으로 이어받아야 한다 — `if (confirm(...))` 식으로 옮겨 적으면 항상 진행돼 버린다. 조각이 없는 화면에서 호출하면 기본 대화상자로 폴백한다.
-  현재 적용 범위는 워크플로우 화면 4개와 `projects.jsp`(전체)다. 기본 `alert()` 를 직접 호출하는 화면은 `embedding.jsp` 하나가 남아 있다(`rag.jsp`·`dashboard.jsp` 는 대화상자를 쓰지 않는다). 대화상자(`.layer-popup--message`, z-index 1100)는 다른 레이어 팝업(1000) 위에 뜨므로 등록 팝업 안의 입력 검증에도 쓸 수 있다.
+  현재 적용 범위는 워크플로우 화면 4개와 `projects.jsp`·`repositories.jsp`(전체)다. 기본 `alert()` 를 직접 호출하는 화면은 `embedding.jsp` 하나가 남아 있다(`rag.jsp`·`dashboard.jsp` 는 대화상자를 쓰지 않는다). 대화상자(`.layer-popup--message`, z-index 1100)는 다른 레이어 팝업(1000) 위에 뜨므로 등록 팝업 안의 입력 검증에도 쓸 수 있다.
 - CSRF: 각 JSP `<head>` 의 `<meta name="_csrf">` / `_csrf_header` 를 `static/js/csrf.js` 가 읽어 jQuery ajax 에 자동 부착하고 fetch 용으로 `window.csrfHeader()` 를 노출한다. 401/403 이면 페이지를 새로고침해 Keycloak 로그인 흐름으로 되돌린다.
 - JSP EL 은 자동 이스케이프가 없다 — 사용자 유래 문자열은 `HtmlUtils.htmlEscape` 로 직접 이스케이프한다.
 - JSP 내 JS 변수 선언은 `var` 가 아니라 **`let`** 을 쓴다(커밋 90b316b 로 통일).
@@ -114,17 +115,17 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 
 ## 문서
 
-- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화·REPO PUSH(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화·PUSH 흐름을 바꾸기 전에 읽을 것.**
+- `src/docs/adr/` — 결정 기록: 0001 pgvector 채택, 0002 RAG 파이프라인·가드레일 LiteLLM 위임, 0003 Keycloak SSO·세션 관리, 0004 sguard 포기 근거, 0005 하이브리드 검색(BM25+RRF)·RAG 소유권, 0006 워크플로우 기능 아키텍처(Flowable·전용 DB·화면 구성), 0007 REPO동기화·REPO PUSH·저장소끌어오기(ScmClient 추상화·GitHub 구현·소유권 예외). **인증/RAG/워크플로우/REPO동기화·PUSH·저장소끌어오기 흐름을 바꾸기 전에 읽을 것.**
 - `src/docs/measurements.md` — 검색 품질·비용 실측 이력. **임베딩 모델이나 검색 임계값을 바꾸기 전에 읽고, 바꾼 뒤에는 같은 형식으로 추가할 것.**
 - `_workspace/00_architect_design.md` — 채팅 세션 기능(chat_master/chat_detail) 상세 설계. 나머지 `_workspace/*` 는 하위 에이전트 작업 요약, `_workspace_prev_*` 는 이전 회차 보관본.
-- `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준으로 갱신). 기능·API 를 바꾸면 함께 고칠 것.
+- `README.md` — 기능·실행 환경·화면·REST API·아키텍처 요약 (2026-10-13 코드 실사 기준, 2026-10-19 저장소끌어오기 반영). 기능·API 를 바꾸면 함께 고칠 것.
 - `DESIGN.md` — 앱 아키텍처가 아니라 UI 디자인 토큰(Apple 스타일) 스펙이다.
 
 ## 하네스: guiSample 기능 개발
 
 **목표:** Spring Boot 4 + Spring AI + Flowable + MyBatis + PostgreSQL(pgvector) + JSP 환경에서 기능을 백엔드·데이터·프론트 전 계층에 걸쳐 이 문서의 규칙대로 일관되게 추가·수정한다.
 
-**호출 조건:** RAG·검색, 워크플로우, 프로젝트·REPO동기화/PUSH, 도메인 화면 등 2개 이상 계층에 걸친 신규·후속 작업 요청 시 `feature-orchestrator` 스킬을 사용한다. 단순 질문(설계 조언, 사용법 문의)이나 1~2줄 수정은 직접 응답해도 된다.
+**호출 조건:** RAG·검색, 워크플로우, 프로젝트·REPO동기화/PUSH·저장소끌어오기, 도메인 화면 등 2개 이상 계층에 걸친 신규·후속 작업 요청 시 `feature-orchestrator` 스킬을 사용한다. 단순 질문(설계 조언, 사용법 문의)이나 1~2줄 수정은 직접 응답해도 된다.
 
 **변경 이력:**
 | 날짜 | 변경 내용 | 대상 | 사유 |
@@ -136,3 +137,4 @@ Spring Boot 4 + Spring AI(2.0.0-M4) + MyBatis + PostgreSQL(pgvector) + JSP. 루�
 | 2026-10-13 | 프로젝트 req_id/repo_url/file_names 컬럼, REPO동기화(ScmClient 추상화 + GitHub 구현) 추가 | 프로젝트·scm·src/test | 저장소 종류 확장(SVN 등) 대비 |
 | 2026-10-14 | REPO PUSH(프로젝트 설명 → 저장소 `src/docs/{project_id}.txt`) 추가 | 프로젝트 팝업·scm(`putFile`)·src/test·e2e | 설계 근거 ADR 0007 결정 상세 8 |
 | 2026-10-19 | 하네스 점검 반영: 오케스트레이터 v2 전환(TeamCreate 제거 → `Agent(name:)`+`SendMessage`, Phase 3 에 `test`·e2e·MyBatis 통과 확인 추가), 범위를 RAG 외 기능까지 확장하며 `rag-feature-orchestrator`→`feature-orchestrator`·`rag-architect`→`feature-architect`·`spring-ai-rag-design`→`feature-design` 개명, 에이전트·스킬을 실제 컨벤션(dto 패키지, jqGrid·jQuery, `RagContextAdvisor`, `db/*.sql` 수동 적용, common.css 단일)과 규칙(소유권·`LoginUserSession`·매퍼 주석 `#{}`·appDialog·SSE·e2e 셀렉터)에 맞춤, QA 경계면 5→7, 모델 선택 근거 주석 | `.claude/agents` 전체·`.claude/skills` 전체 | 5월 구성 이후 코드와 하네스 불일치 누적, v1 도구 미동작 |
+| 2026-10-19 | 저장소끌어오기 화면(`repositories.jsp`, 사이드바 마지막 메뉴) 추가 — `ScmClient.findTree`(default)·GitHub Trees API, 폴더 탐색형 그리드, DB 미사용, 점검완료는 배치만 | 사이드바·scm·src/test·e2e(`repositories`) | 설계 근거 ADR 0007 결정 상세 9 |

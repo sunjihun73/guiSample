@@ -1,10 +1,14 @@
 package kr.co.jihun.guisample.scm.github;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import kr.co.jihun.guisample.scm.ScmClient;
 import kr.co.jihun.guisample.scm.ScmCommit;
+import kr.co.jihun.guisample.scm.ScmEntryType;
 import kr.co.jihun.guisample.scm.ScmException;
 import kr.co.jihun.guisample.scm.ScmPushResult;
+import kr.co.jihun.guisample.scm.ScmTree;
+import kr.co.jihun.guisample.scm.ScmTreeEntry;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
@@ -15,12 +19,14 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriBuilder;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -34,7 +40,7 @@ import java.util.regex.Pattern;
  * GitHub REST API 기반 {@link ScmClient}.
  *
  * <p>라이브러리(hub4j github-api) 대신 Spring {@link RestClient} 로 직접 호출한다 — 쓰는 API 가
- * 커밋 목록·커밋 상세·파일 내용(Contents) 몇 개뿐이고, 라이브러리는 Jackson 2 와 자체 HTTP 스택을
+ * 커밋 목록·커밋 상세·파일 내용(Contents)·저장소 메타·브랜치·트리(Git Trees) 몇 개뿐이고, 라이브러리는 Jackson 2 와 자체 HTTP 스택을
  * 끌고 들어와 Boot 4(Jackson 3) 환경과 겹친다.
  */
 @Component
@@ -42,6 +48,9 @@ import java.util.regex.Pattern;
 public class GitHubScmClient implements ScmClient
 {
     private static final int PER_PAGE = 100;
+
+    /** Git 트리에서 심볼릭 링크를 나타내는 blob mode. */
+    private static final String SYMLINK_MODE = "120000";
 
     /** 파일 경로 구분자 — Contents API 경로를 세그먼트로 쪼갤 때 쓴다. */
     private static final Pattern PATH_SEPARATOR = Pattern.compile("/");
@@ -181,6 +190,190 @@ public class GitHubScmClient implements ScmClient
 
         String commitId = (response == null || response.commit() == null) ? null : response.commit().sha();
         return new ScmPushResult(path, commitId, existingSha == null);
+    }
+
+    /**
+     * 브랜치 최신 커밋의 전체 파일 트리 — GitHub 호출 3회.
+     *
+     * <ol>
+     *   <li>{@code GET /repos/{o}/{r}} — 기본 브랜치. 404 면 "저장소를 찾을 수 없음"</li>
+     *   <li>{@code GET /repos/{o}/{r}/branches/{branch}} — 최신 커밋(sha·메시지·시각)과 트리 sha.
+     *       404 면 "브랜치를 찾을 수 없음" — 1)을 먼저 부르는 이유가 저장소 없음과 이 경우를 구분하기 위해서다</li>
+     *   <li>{@code GET /repos/{o}/{r}/git/trees/{treeSha}?recursive=1} — 전체 항목</li>
+     * </ol>
+     *
+     * <p>base URL 은 설정값({@code scm.github.api-base-url})으로 고정이라 사용자 입력이 호출 대상 호스트를 바꿀 수 없다.
+     */
+    @Override
+    public ScmTree findTree(String repoUrl, String branch)
+    {
+        RepoRef ref = require(repoUrl);
+
+        RepoMeta meta = call(repoUrl, () -> restClient.get()
+                .uri(uri -> uri.path("/repos/{owner}/{repo}").build(ref.owner(), ref.repo()))
+                .retrieve()
+                .body(RepoMeta.class));
+        String defaultBranch = meta == null ? null : meta.defaultBranch();
+
+        boolean explicitBranch = StringUtils.hasText(branch);
+        String targetBranch = explicitBranch ? branch.trim() : defaultBranch;
+        if (!StringUtils.hasText(targetBranch))
+        {
+            throw new ScmException("커밋이 없는 빈 저장소이거나 브랜치가 없습니다: " + repoUrl);
+        }
+
+        BranchInfo branchInfo = findBranch(repoUrl, ref, targetBranch, explicitBranch);
+        BranchCommit head = branchInfo == null ? null : branchInfo.commit();
+        if (head == null || head.commit() == null || head.commit().tree() == null
+            || !StringUtils.hasText(head.commit().tree().sha()))
+        {
+            throw new ScmException("브랜치의 최신 커밋 정보를 읽지 못했습니다: " + repoUrl);
+        }
+        String commitSha = head.sha();
+        String treeSha   = head.commit().tree().sha();
+
+        TreeResponse tree = call(repoUrl, () -> restClient.get()
+                .uri(uri -> uri.path("/repos/{owner}/{repo}/git/trees/{treeSha}")
+                        .queryParam("recursive", 1)
+                        .build(ref.owner(), ref.repo(), treeSha))
+                .retrieve()
+                .body(TreeResponse.class));
+
+        List<ScmTreeEntry> entries = new ArrayList<>();
+        if (tree != null && tree.tree() != null)
+        {
+            for (TreeItem item : tree.tree())
+            {
+                ScmTreeEntry entry = toEntry(item, properties.webHost(), ref, commitSha);
+                if (entry != null)
+                {
+                    entries.add(entry);
+                }
+            }
+        }
+
+        String branchName = (branchInfo.name() != null) ? branchInfo.name() : targetBranch;
+        CommitData data = head.commit();
+        Instant commitDate = data.committer() == null ? null : parseInstant(data.committer().date());
+        return new ScmTree(branchName, defaultBranch, commitSha, data.message() == null ? "" : data.message(),
+                commitDate, tree != null && tree.truncated(), entries);
+    }
+
+    /** 브랜치 조회 — 404/409 를 브랜치·빈 저장소 문구로 바꾼다. 나머지 오류는 공통 문구. */
+    private BranchInfo findBranch(String repoUrl, RepoRef ref, String branch, boolean explicitBranch)
+    {
+        try
+        {
+            return restClient.get()
+                    .uri(uri -> branchUri(uri, ref, branch))
+                    .retrieve()
+                    .body(BranchInfo.class);
+        }
+        catch (RestClientResponseException e)
+        {
+            int status = e.getStatusCode().value();
+            if (status == 404 && explicitBranch)
+            {
+                throw new ScmException("브랜치 '" + branch + "' 를 찾을 수 없습니다: " + repoUrl, e);
+            }
+            if (status == 404 || status == 409)
+            {
+                throw new ScmException("커밋이 없는 빈 저장소이거나 브랜치가 없습니다: " + repoUrl, e);
+            }
+            throw toScmException(repoUrl, e);
+        }
+        catch (RestClientException e)
+        {
+            throw new ScmException("GitHub 호출 실패: " + repoUrl + " (" + e.getMessage() + ")", e);
+        }
+    }
+
+    /**
+     * Branches API URI — 슬래시가 든 브랜치명({@code feature/x})을 세그먼트로 쪼개 넣는다
+     * ({@link #contentsUri} 와 같은 관례). 세그먼트는 URI 변수 값으로 넘겨 브랜치명의 중괄호 등이
+     * 템플릿으로 해석되지 않게 한다.
+     */
+    static URI branchUri(UriBuilder uri, RepoRef ref, String branch)
+    {
+        String[] segments = PATH_SEPARATOR.split(branch, -1);
+        List<Object> values = new ArrayList<>(List.of(ref.owner(), ref.repo()));
+        uri.pathSegment("repos", "{owner}", "{repo}", "branches");
+        for (int i = 0; i < segments.length; i++)
+        {
+            /* '.'·'..' 는 Git 브랜치명에 올 수 없고, URI 정규화로 다른 API 경로를 가리킬 수 있어 거부한다. */
+            if (segments[i].isEmpty() || ".".equals(segments[i]) || "..".equals(segments[i]))
+            {
+                throw new ScmException("브랜치명이 올바르지 않습니다: " + branch);
+            }
+            uri.pathSegment("{b" + i + "}");
+            values.add(segments[i]);
+        }
+        return uri.build(values.toArray());
+    }
+
+    /** GitHub 트리 항목 종류 → 저장소 중립 종류. 알 수 없는 종류면 null. */
+    static ScmEntryType entryType(String type, String mode)
+    {
+        if (type == null)
+        {
+            return null;
+        }
+        return switch (type)
+        {
+            case "tree" -> ScmEntryType.DIR;
+            case "blob" -> SYMLINK_MODE.equals(mode) ? ScmEntryType.SYMLINK : ScmEntryType.FILE;
+            case "commit" -> ScmEntryType.SUBMODULE;
+            default -> null;
+        };
+    }
+
+    /** 트리 항목 → {@link ScmTreeEntry}. 경로가 없거나 종류를 모르면 null(목록에서 뺀다). size 는 FILE 만. */
+    static ScmTreeEntry toEntry(TreeItem item, String webHost, RepoRef ref, String commitSha)
+    {
+        ScmEntryType type = item == null ? null : entryType(item.type(), item.mode());
+        if (type == null || !StringUtils.hasText(item.path()))
+        {
+            return null;
+        }
+        Long size = type == ScmEntryType.FILE ? item.size() : null;
+        return new ScmTreeEntry(item.path(), type, size, webUrl(webHost, ref, commitSha, item.path(), type));
+    }
+
+    /**
+     * GitHub 웹 화면 주소 — 폴더는 {@code tree}, 파일·링크는 {@code blob}, 서브모듈은 null.
+     * 커밋 SHA 로 고정해 브랜치가 움직여도 화면과 같은 내용을 본다. 경로 세그먼트는 각각 인코딩한다(슬래시 유지).
+     */
+    static String webUrl(String webHost, RepoRef ref, String commitSha, String path, ScmEntryType type)
+    {
+        if (type == ScmEntryType.SUBMODULE || !StringUtils.hasText(commitSha))
+        {
+            return null;
+        }
+        String kind = type == ScmEntryType.DIR ? "tree" : "blob";
+        return UriComponentsBuilder.newInstance()
+                .scheme("https")
+                .host(webHost)
+                .pathSegment(ref.owner(), ref.repo(), kind, commitSha)
+                .pathSegment(PATH_SEPARATOR.split(path))
+                .build()
+                .encode()
+                .toUriString();
+    }
+
+    private static Instant parseInstant(String value)
+    {
+        if (!StringUtils.hasText(value))
+        {
+            return null;
+        }
+        try
+        {
+            return Instant.parse(value);
+        }
+        catch (DateTimeParseException e)
+        {
+            return null;    // 표시용 값이라 목록 조회를 실패시키지 않는다
+        }
     }
 
     /** 기존 파일의 blob sha. 파일이 없으면(404) null — 디렉터리이거나 경로가 비정상이면 예외. */
@@ -347,6 +540,50 @@ public class GitHubScmClient implements ScmClient
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record CommitRef(String sha)
+    {
+    }
+
+    /** 저장소 메타 — 필요한 건 기본 브랜치뿐이다. (Jackson 에는 MyBatis 의 camelCase 매핑이 없어 이름을 지정한다.) */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record RepoMeta(@JsonProperty("default_branch") String defaultBranch)
+    {
+    }
+
+    /** Branches API 단건 응답. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record BranchInfo(String name, BranchCommit commit)
+    {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record BranchCommit(String sha, CommitData commit)
+    {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record CommitData(String message, GitActor committer, TreeRef tree)
+    {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record GitActor(String date)
+    {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record TreeRef(String sha)
+    {
+    }
+
+    /** Git Trees API 응답 ({@code recursive=1}). */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record TreeResponse(String sha, List<TreeItem> tree, boolean truncated)
+    {
+    }
+
+    /** 트리 항목 — size 는 blob 만 온다. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record TreeItem(String path, String mode, String type, String sha, Long size)
     {
     }
 }

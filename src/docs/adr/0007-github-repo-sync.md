@@ -1,7 +1,7 @@
-# 0007. REPO동기화·REPO PUSH — 저장소와 프로젝트 데이터 주고받기 (GitHub 우선, SCM 추상화)
+# 0007. REPO동기화·REPO PUSH·저장소끌어오기 — 저장소와 프로젝트 데이터 주고받기 (GitHub 우선, SCM 추상화)
 
 - 상태(Status): 승인됨(Accepted)
-- 날짜(Date): 2026-10-13 (2026-10-14 REPO PUSH 추가)
+- 날짜(Date): 2026-10-13 (2026-10-14 REPO PUSH 추가, 2026-10-19 저장소끌어오기 추가)
 
 ## 배경(Context)
 
@@ -24,25 +24,29 @@
 
 2026-10-14 에 같은 인터페이스에 **쓰기 한 개(`putFile`)** 를 더해 **REPO PUSH**(프로젝트 설명을 저장소 문서로 커밋)를 붙였다. 푸시는 팝업에서 한 건씩 실행하므로 소유권 규칙을 그대로 지킨다(결정 상세 8).
 
+2026-10-19 에 같은 인터페이스에 **조회 한 개(`findTree`)** 를 더해 **저장소끌어오기** 화면(브랜치 최신 커밋의 파일 목록을 GitHub 처럼 탐색)을 붙였다. 서버에 clone 하지 않고 API 로 트리만 읽으며, 앱 DB 를 쓰지 않는다(결정 상세 9).
+
 ## 구성 요소
 
 | 역할 | 파일 |
 |---|---|
 | 저장소 조회 계약 | `scm/ScmClient.java` |
 | 저장소 중립 커밋 요약 | `scm/ScmCommit.java` |
+| 저장소 중립 파일 트리 | `scm/ScmTree.java`, `scm/ScmTreeEntry.java`, `scm/ScmEntryType.java` |
 | 구현체 선택 | `scm/ScmClientResolver.java` |
 | 조회 실패 예외 | `scm/ScmException.java` |
 | GitHub 구현 | `scm/github/GitHubScmClient.java` |
 | GitHub 설정 바인딩 | `scm/github/GitHubProperties.java` (`scm.github.*`) |
 | 동기화 규칙 | `service/RepoSyncService.java` |
 | 푸시 규칙 | `service/RepoPushService.java` |
-| 응답 DTO | `dto/RepoSyncResult.java`, `dto/RepoPushResult.java`, `scm/ScmPushResult.java` |
-| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`, `pushRepository`) |
+| 끌어오기(트리 → 그리드 행) | `service/RepoBrowseService.java` |
+| 응답 DTO | `dto/RepoSyncResult.java`, `dto/RepoPushResult.java`, `scm/ScmPushResult.java`, `dto/RepoFileRow.java`, `dto/RepoTreeSummary.java` |
+| REST | `controller/user/ProjectMasterRestController.java` (`syncRepository`, `pushRepository`), `controller/user/RepositoryRestController.java` (`GET /user/repository/files`) |
 | 매퍼 | `mapper/ProjectMasterMapper.java`, `resources/mapper/ProjectMasterMapper.xml` (`updateProjectFileNames`) |
-| 화면 | `views/user/projects.jsp` (`#btnRepoSync`, 수정 팝업의 `#btnPopupRepoPush`) |
+| 화면 | `views/user/projects.jsp` (`#btnRepoSync`, 수정 팝업의 `#btnPopupRepoPush`), `views/user/repositories.jsp` (저장소끌어오기, 사이드바 마지막 메뉴) |
 | 설정 | `application-local.yaml`, `application-e2e.yaml` 의 `scm:` 블록 |
-| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../service/RepoPushServiceTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
-| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼, REPO PUSH 버튼) |
+| 단위 테스트 | `src/test/.../service/RepoSyncServiceTest.java`, `src/test/.../service/RepoPushServiceTest.java`, `src/test/.../service/RepoBrowseServiceTest.java`, `src/test/.../scm/github/GitHubScmClientTest.java` |
+| 회귀 테스트 | `e2e/specs/projects.spec.ts` (REPO동기화 버튼, REPO PUSH 버튼), `e2e/specs/repositories.spec.ts` (저장소끌어오기, `@github` 2건은 실제 GitHub 호출) |
 
 ## 전체 흐름
 
@@ -198,6 +202,44 @@ default ScmPushResult putFile(String repoUrl, String path, String content, Strin
 }
 ```
 
+### 9. 저장소끌어오기 — 같은 추상화에 트리 조회 한 개를 더한다 (2026-10-19)
+
+좌측 메뉴 마지막의 **저장소끌어오기** 화면(`/user/repositories`)에서 저장소 URL·브랜치명을 넣고 **끌어오기**를 누르면, 그 브랜치 최신 커밋의 파일 목록을 GitHub 웹처럼 폴더 탐색형 그리드로 보여 준다. 요구사항의 "pull" 은 **서버에 clone 하는 것이 아니라 API 로 트리를 읽는 것**으로 해석했다 — 완료 조건이 "그리드에 목록이 보이는 것"이고, clone 은 결정 상세 1에서 이미 기각한 비용(디스크·시간, Git 전용)을 그대로 진다. 이번에도 라이브러리는 추가하지 않았다(결정 상세 2의 근거 그대로).
+
+```java
+default ScmTree findTree(String repoUrl, String branch) {
+    throw new ScmException("이 저장소는 파일 목록 조회를 지원하지 않습니다: " + repoUrl);
+}
+```
+
+- **`putFile` 과 같은 `default` 방식.** 기존 구현체와 테스트의 가짜 `ScmClient` 가 수정 없이 컴파일된다. 반환값 `ScmTree`(브랜치·기본 브랜치·최신 커밋 id/메시지/시각·`truncated`·항목 목록)와 `ScmTreeEntry`(경로·종류·크기·웹 주소)는 저장소 중립이다. 종류는 `ScmEntryType` = `DIR | FILE | SYMLINK | SUBMODULE`.
+- **GitHub 구현은 3회 호출이다.**
+  1. `GET /repos/{o}/{r}` — 기본 브랜치. 404 면 "저장소를 찾을 수 없음".
+  2. `GET /repos/{o}/{r}/branches/{branch}` — 최신 커밋과 트리 sha. 사용자가 브랜치를 넣었는데 404 면 "브랜치 'x' 를 찾을 수 없습니다", 빈칸(기본 브랜치)인데 404/409 면 "커밋이 없는 빈 저장소이거나 브랜치가 없습니다". 1을 먼저 부르는 이유가 이 두 경우를 "저장소 없음"과 구분하기 위해서다.
+  3. `GET /repos/{o}/{r}/git/trees/{treeSha}?recursive=1` — 전체 항목. 응답의 `truncated`(GitHub: 10만 항목/7MB 초과)를 그대로 넘긴다.
+- **브랜치명은 `pathSegment` 로 넣는다.** `feature/x` 처럼 슬래시가 든 브랜치명도 그대로 동작한다. `.`·`..` 세그먼트는 거부한다(경로 이탈 방지, 회귀 테스트 있음). 변수 값으로 넘기므로 브랜치명의 중괄호가 URI 템플릿으로 해석되지 않는다.
+- **항목 변환.** `tree`→DIR, `blob`→FILE(mode `120000` 이면 SYMLINK), `commit`→SUBMODULE. 크기는 FILE 만. 웹 주소는 **커밋 sha 로 고정한** `https://{web-host}/{o}/{r}/blob|tree/{sha}/{path}` 라 화면을 띄운 뒤 브랜치가 움직여도 같은 파일이 열린다. 서브모듈은 null. 종류를 모르는 항목·경로가 빈 항목은 뺀다.
+- **행 만들기는 서비스의 순수 함수다.** `RepoBrowseService.toRows` 가 경로로 `name`·`parentPath`·`depth` 를 계산하고, 같은 폴더 안에서 **폴더 먼저·대소문자 무시 이름순**으로 정렬한다(GitHub 웹과 같은 순서). 서버 상한 `MAX_ROWS`(2만 행)를 넘으면 자르고 `truncated` 를 켠다.
+- **폴더 이동은 브라우저에서만.** 끌어오기 1회에 전체 트리를 받아 화면이 `parentPath` 로 묶어 두므로, 폴더를 열거나 `..`·경로 링크로 올라가도 GitHub 를 다시 부르지 않는다. 비인증 한도(시간당 60회)로 끌어오기 약 20회가 가능하다.
+- **파일별 최근 커밋(메시지·시각) 컬럼은 넣지 않았다.** GitHub 웹에는 있지만 파일마다 API 호출 1회가 들어 한도로 감당이 안 된다. 그리드 위에 **브랜치 최신 커밋 한 줄**(브랜치·짧은 sha·메시지·시각)만 둔다.
+- **트랜잭션·DB 없음, 소유권 "해당 없음".** 앱 DB 를 읽거나 쓰지 않으므로 걸 조건이 없다. 인증은 `/user/**` 가 강제한다. 단, 서버의 `GITHUB_TOKEN` 으로 호출하므로 **토큰이 읽을 수 있는 비공개 저장소의 파일 목록은 로그인한 누구나 볼 수 있다** — 사용자 확인 후 그대로 허용했다("감수하는 것" 참조).
+- **점검완료 버튼은 배치만 했다.** 동작 정의가 아직 없어 클릭해도 아무 일도 없다. 기록이 필요해지면 앱 DB(5432)에 점검 이력 테이블을 두고 직접 소유자 컬럼으로 소유권을 건다.
+
+| 메서드 | 경로 | 응답 |
+|---|---|---|
+| GET | `/user/repository/files?repoUrl=&branch=` | 성공 `{ success: true, page: 1, total: 1, records, rows: RepoFileRow[], summary: RepoTreeSummary }` / 실패 `{ success: false, message, page: 1, total: 0, records: 0, rows: [] }` |
+
+읽기 전용이라 GET 이다. **모든 실패를 HTTP 200 + `success: false`** 로 돌려 화면이 `appDialog` 경고로 보여 준다(`repoUrl` 누락도 400 이 아니다). jqGrid shape 를 유지하되 전체를 한 번에 내리고(`page=1, total=1`) 화면이 클라이언트 페이징(100/300/1000)한다.
+
+```json
+{
+  "path": "src/main", "name": "main", "parentPath": "src", "type": "DIR",
+  "size": null, "depth": 1, "webUrl": "https://github.com/sunjihun73/guiSample/tree/d6e3b58…/src/main"
+}
+```
+
+`summary`: `repoUrl, owner, repo, branch, defaultBranch, commitId, commitMessage, commitDate(ISO-8601 UTC), truncated, entryCount`.
+
 ## 실측 근거
 
 2026-10-13 로컬 환경(토큰 없음, 공개 저장소)에서 확인했다.
@@ -222,6 +264,15 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 | 교체 경로(sha 포함 PUT) | 같은 프로젝트를 한 번 더 푸시 | `created=false`, 커밋 `6466def` — 422 없이 성공 |
 | 재푸시의 멱등성 | 두 번째 커밋의 diff | `files: []`, `stats: 0` — 파일은 그대로이고 **빈 커밋**이 하나 쌓인다 (결정 상세 8) |
 
+저장소끌어오기는 2026-10-19 에 같은 저장소(`sunjihun73/guiSample`, 토큰 없음)로 확인했다.
+
+| 확인 항목 | 방법 | 결과 |
+|---|---|---|
+| 트리 크기·잘림 | Trees API 직접 호출(main) | 480 항목, `truncated=false`. 브랜치 `dev`·`main` |
+| 화면 끝까지 동작 | 앱 기동 후 `main` 끌어오기 | 루트 16행(폴더 먼저·이름순), 커밋 바 `main d6e3b58 …`, `src` 진입 시 `docs`·`main`·`test` |
+| 화면 회귀 | `e2e/specs/repositories.spec.ts` + `workflow`·`projects` 스펙 | 27건 통과(`@github` 2건 포함) |
+| 변환·정렬·URI | `./gradlew test` — `RepoBrowseServiceTest` 9건, `GitHubScmClientTest` 추가 7건 | 전체 33건 통과 |
+
 실측용 임시 프로젝트 행은 확인 뒤 삭제했다(남겨 두면 e2e 실행마다 GitHub 를 호출한다).
 
 ## 결과(Consequences)
@@ -240,7 +291,9 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 - **`max-pages`(10페이지 = 1000커밋) 를 넘는 저장소는 오래된 커밋이 조용히 잘린다.** GitHub 는 최신순으로 주므로 30일 범위 중 오래된 쪽이 빠진다. 30일에 1000커밋을 넘는 저장소를 다룰 때 값을 올릴 것.
 - **저장소 종류 판정이 URL 에만 의존한다.** 같은 `https://` 호스트로 Git 과 SVN 을 함께 서비스하는 사내 서버라면 URL 만으로 구분이 안 된다. 그때는 `repo_type` 컬럼이나 호스트별 설정을 도입해야 한다.
 - 기본 브랜치만 보므로 병합 전 커밋은 반영되지 않는다.
-- 토큰 없이 호출하면 **시간당 60회**(IP 기준) 한도다. 저장소당 목록 1~10회 + 일치 커밋 수만큼 상세 호출이 들어가므로 프로젝트가 많으면 금방 찬다.
+- 토큰 없이 호출하면 **시간당 60회**(IP 기준) 한도다. 저장소당 목록 1~10회 + 일치 커밋 수만큼 상세 호출이 들어가므로 프로젝트가 많으면 금방 찬다. 저장소끌어오기도 1회당 3회를 같은 한도에서 쓴다.
+- **저장소끌어오기는 서버 토큰으로 조회한다.** 토큰이 읽을 수 있는 비공개 저장소의 파일 목록을 로그인한 사용자 누구나 볼 수 있다. 막으려면 `findTree` 의 저장소 정보 조회 결과가 `private` 일 때 거부하면 된다.
+- **저장소끌어오기 e2e 의 `@github` 2건은 실제 GitHub 를 호출한다.** 한도가 차거나 오프라인이면 실패하므로 `--grep-invert "@guardrail|@github"` 로 뺄 수 있다.
 
 ## 운영 주의
 
@@ -278,6 +331,7 @@ REPO PUSH 는 2026-10-14 에 실제 저장소(`sunjihun73/guiSample`, 공개)로
 | 2026-10-13 | 최초 작성 — `ScmClient` 추상화, GitHub `RestClient` 구현, `{req_id}` 매칭, 교체/유지 규칙 |
 | 2026-10-13 | 사용자 이름(소유자) 조건 제거 — 전체 프로젝트 대상, `update_user_id` 는 실행자 기록 |
 | 2026-10-14 | REPO PUSH 추가 — `ScmClient.putFile`(default), GitHub Contents API, `src/docs/{project_id}.txt`, 소유권 규칙 적용 |
+| 2026-10-19 | 저장소끌어오기 추가 — `ScmClient.findTree`(default), GitHub 3회 호출(저장소·브랜치·Trees recursive), 폴더 탐색형 그리드, DB 미사용, 점검완료는 배치만 |
 
 ## 관련 문서
 

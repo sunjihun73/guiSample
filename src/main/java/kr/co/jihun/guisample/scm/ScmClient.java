@@ -6,7 +6,7 @@ import java.util.List;
 /**
  * 소스 저장소(SCM) 조회 계약.
  *
- * <p>REPO동기화는 이 인터페이스만 보고 동작한다. 저장소 종류(GitHub, GitLab, SVN …)를 늘릴 때는
+ * <p>REPO동기화·REPO PUSH·저장소끌어오기는 이 인터페이스만 보고 동작한다. 저장소 종류(GitHub, GitLab, SVN …)를 늘릴 때는
  * 구현체를 하나 더 빈으로 등록하면 되고, {@link ScmClientResolver} 가 {@link #supports} 로 골라 쓴다.
  * 동기화 로직({@code RepoSyncService})은 고칠 필요가 없다.
  *
@@ -39,5 +39,19 @@ public interface ScmClient
     default ScmPushResult putFile(String repoUrl, String path, String content, String commitMessage)
     {
         throw new ScmException("이 저장소는 파일 푸시를 지원하지 않습니다: " + repoUrl);
+    }
+
+    /**
+     * 브랜치 최신 커밋의 전체 파일 트리 (저장소끌어오기 화면).
+     *
+     * <p>{@link #putFile} 과 같은 이유로 {@code default} 다 — 트리 조회를 구현하지 않은 저장소는
+     * 기본 구현이 {@link ScmException} 을 던지고, 기존 구현체는 고칠 필요가 없다.
+     *
+     * @param branch 조회할 브랜치. null 이거나 비었으면 저장소의 기본 브랜치
+     * @return 트리 (실제 사용한 브랜치·최신 커밋 요약 포함)
+     */
+    default ScmTree findTree(String repoUrl, String branch)
+    {
+        throw new ScmException("이 저장소는 파일 목록 조회를 지원하지 않습니다: " + repoUrl);
     }
 }

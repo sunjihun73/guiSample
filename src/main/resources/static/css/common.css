@@ -1893,3 +1893,97 @@ body {
     font-size: 12px;
     line-height: 1;
 }
+
+/* ══ 저장소끌어오기 (user/repositories.jsp) ═════════════════ */
+/* 저장소URL 입력은 길어서 기본 폭(280px)보다 넓힌다. */
+.repo-url-input { flex: 1 1 360px; min-width: 240px; }
+
+/* 최신 커밋 바 — 그리드 위 한 줄. 끌어오기 전에는 hidden 속성으로 숨긴다. */
+.repo-commit-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-xs) var(--sp-sm);
+    margin-bottom: var(--sp-xs);
+    padding: 10px var(--sp-md);
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
+    background: hsl(var(--muted));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius-lg);
+}
+.repo-commit-bar[hidden] { display: none; }
+.repo-commit-bar__branch {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    font-weight: 600;
+    color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+    border-radius: var(--radius-full);
+}
+.repo-commit-bar__sha {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: hsl(var(--foreground));
+}
+.repo-commit-bar__message {
+    flex: 1 1 200px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: hsl(var(--foreground));
+}
+.repo-commit-bar__date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.repo-commit-bar__warn {
+    flex-basis: 100%;
+    color: hsl(var(--warning));
+    font-weight: 500;
+}
+.repo-commit-bar__warn[hidden] { display: none; }
+
+/* 경로 표시(breadcrumb) — 루트(저장소 이름) / 세그먼트. 마지막(현재 폴더)은 링크가 아니다. */
+.repo-breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: var(--sp-sm);
+    font-size: 14px;
+    color: hsl(var(--muted-foreground));
+}
+.repo-breadcrumb[hidden] { display: none; }
+.repo-breadcrumb__item {
+    color: hsl(var(--primary));
+    text-decoration: none;
+    font-weight: 500;
+}
+.repo-breadcrumb__item:hover { text-decoration: underline; }
+.repo-breadcrumb__current { color: hsl(var(--foreground)); font-weight: 600; }
+.repo-breadcrumb__sep { color: hsl(var(--muted-foreground) / 0.7); }
+
+/* 그리드 이름 셀 — 폴더/파일/상위(..) 링크와 아이콘 */
+.repo-file__dir,
+.repo-file__file,
+.repo-file__up {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: hsl(var(--foreground));
+    text-decoration: none;
+}
+.repo-file__dir { font-weight: 500; }
+.repo-file__dir:hover,
+.repo-file__file:hover,
+.repo-file__up:hover { color: hsl(var(--primary)); text-decoration: underline; }
+.repo-file__plain {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: hsl(var(--muted-foreground));
+}
+.repo-file__icon { width: 16px; height: 16px; flex-shrink: 0; }
+.repo-file__icon--dir { color: hsl(var(--primary) / 0.75); }
+.repo-file__icon--file { color: hsl(var(--muted-foreground)); }

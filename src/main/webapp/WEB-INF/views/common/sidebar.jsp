@@ -9,7 +9,7 @@
         <% String activeMenu = "dashboard"; %>
         <%@ include file="/WEB-INF/views/common/sidebar.jsp" %>
 
-    activeMenu 값: dashboard | projects | rag | embedding | workflow-step1 | workflow-step2 | workflow-step3 | workflow-ends
+    activeMenu 값: dashboard | projects | rag | embedding | workflow-step1 | workflow-step2 | workflow-step3 | workflow-ends | repositories
 
     <jsp:include>(런타임 include) 가 아니라 <%@ include %>(정적 include)를 쓴다.
     런타임 include 는 DispatcherType.INCLUDE 디스패치를 일으키는데 SecurityConfig 는
@@ -119,6 +119,22 @@
                     <a href="/user/workflow/ends"><span class="nav-label">종료</span></a>
                 </li>
             </ul>
+        </li>
+
+        <!-- 저장소끌어오기 — 최상위 메뉴(워크플로우 하위 메뉴에 넣지 않는다: workflow.spec.ts 가 하위 항목 4개를 센다) -->
+        <li class="nav-menu__item<%= "repositories".equals(sidebarActive) ? " active" : "" %>" id="navRepositories">
+            <a href="/user/repositories">
+                <svg class="nav-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 2.5h7.5A1.5 1.5 0 0 1 12 4v5" stroke="currentColor" stroke-width="1.3"
+                          stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 2.5v10A1.5 1.5 0 0 0 4.5 14H7" stroke="currentColor" stroke-width="1.3"
+                          stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12 10.5v4M10 12.5l2 2 2-2" stroke="currentColor" stroke-width="1.3"
+                          stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="nav-label">저장소끌어오기</span>
+            </a>
+            <span class="tooltip">저장소끌어오기</span>
         </li>
     </ul>
 </aside>

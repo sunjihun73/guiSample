@@ -32,6 +32,13 @@ public class MainController
         return "user/embedding";
     }
 
+    /* 저장소끌어오기 — 파일 트리 조회는 RepositoryRestController(GET /user/repository/files). */
+    @GetMapping({ "/repositories" })
+    public String repositories()
+    {
+        return "user/repositories";
+    }
+
     /* ── 워크플로우 (Flowable) ──────────────────────────────
        화면 3개가 각각 BPMN 의 userTask(step1/step2/step3)에 대응한다.
        진행 중인 태스크 조회·완료는 WorkflowRestController 가 담당한다. */
